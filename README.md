@@ -13,8 +13,8 @@
 ## Quick start
 ```bash
 # 1. grab the code
-git clone git@github.com:jonxlegasa/polymathjr-pinns-jonxlegasa.git
-cd polymathjr-pinns-jonxlegasa
+git clone git@github.com:jonxlegasa/polymathjr-pinns-jon-jeet.git
+cd polymathjr-pinns-jon-jeet
 
 # 2. download the dependencies once
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
