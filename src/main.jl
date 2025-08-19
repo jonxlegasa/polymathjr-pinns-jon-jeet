@@ -68,13 +68,18 @@ function init_batches(batch_sizes::Array{Int})
   """
   for (batch_index, k) in enumerate(batch_sizes)
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
-    s::Settings = Plugboard.Settings(5, 5, k)
-    println("Batch size:", k)
-    Plugboard.generate_random_ode_dataset(s, batch_index) # training data
-    # Plugboard.generate_random_ode_dataset(s, batch_index) # mayb create the validation JSON data
-    # Create the training dirs
+
     run_number_formatted = lpad(batch_index, 2, '0')
-    println("Beginining training run for:", batch_index)
+    s::Settings = Plugboard.Settings(2, 2, k)
+
+    println("\n" * "="^50)
+    println("Generating datasets for training run $run_number_formatted")
+    println("="^50)
+    println("Number of examples: ", k)
+
+    Plugboard.generate_random_ode_dataset(s, batch_index) # training data
+    # Plugboard.generate_random_ode_dataset(s, batch_index) # maybe create the validation JSON data
+    # Create the training dirs
     println("\n" * "="^50)
     println("Starting Training Run $run_number_formatted")
     println("="^50)
@@ -97,6 +102,7 @@ function run_training_sequence(batch_sizes::Array{Int})
   # Loop through each entry in the JSON object
   # This is the code that is not working. Alpha matrix is seen as a number.
   for (run_idx, inner_dict) in dataset
+    println(inner_dict)
     for (alpha_matrix_key, series_coeffs) in inner_dict
       # TODO: We need to setup the pinn training here
       println("Series coefficients that will be trained soon...: $series_coeffs") # lil error checking
@@ -107,6 +113,7 @@ function run_training_sequence(batch_sizes::Array{Int})
       alpha_matrix = eval(Meta.parse(alpha_matrix_key))
       settings = PINNSettings(64, 1234, alpha_matrix, 500, 100)
 
+      #=
       # Train the network
       p_trained, coeff_net, st = train_pinn(settings, series_coeffs)
       sample_matrix = [1;
@@ -116,6 +123,11 @@ function run_training_sequence(batch_sizes::Array{Int})
       a_learned, u_func = evaluate_solution(p_trained, coeff_net, st, sample_matrix)
       println(a_learned)
       println(u_func)
+
+      =#
+
+
+
       # TODO: Add the training implementation for the PINN Here
       # PINN training here using:
       # - alpha_matrix (converted from key)
@@ -125,7 +137,11 @@ function run_training_sequence(batch_sizes::Array{Int})
   end
 end
 
-batch = [1, 1]
+# making the array large will increase number of training runs.
+# each entry of the array is an interger that determines the # of examples generated in 
+# each training run
+
+batch = [1, 1, 1]
 
 # Uncomment to run the example
 run_training_sequence(batch)
