@@ -24,6 +24,7 @@ function setup_training_run(run_number::Int64, batch_size::Any)
     mkdir(data_dir)
     println("Created data directory: $data_dir")
   end
+
   # Format run number with zero padding (01, 02, 03, etc.)
   run_number_formatted = lpad(run_number, 2, '0')
   # Create training run directory
