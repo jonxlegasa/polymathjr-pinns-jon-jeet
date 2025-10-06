@@ -48,11 +48,12 @@ F = Float32
 struct PINNSettings
   neuron_num::Int
   seed::Int
-  ode_matrix::Matrix{Int64}
+  ode_matrices::Dict{String, Any} # from the specific training run that is specified by the run number
   maxiters_adam::Int
   maxiters_lbfgs::Int
 end
 
+# We need to have a parameter for the PINN to allow us to swap architectures easily
 # ---------------------------------------------------------------------------
 # Step 3: Define the Mathematical Problem (The ODE)
 # ---------------------------------------------------------------------------
@@ -84,7 +85,7 @@ N = 10 # The degree of the highest power term in the series.
 # Pre-calculate factorials (0!, 1!, ..., N!) for use in the series.
 fact = factorial.(0:N)
 
-num_supervised = 5 # The number of coefficients we will supervise during training.
+num_supervised = 10 # The number of coefficients we will supervise during training.
 supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
 
 # Create a set of points inside the domain to enforce the ODE. These are called "collocation points".
@@ -100,7 +101,9 @@ bc_weight = F(100.0)
 
 function initialize_network(settings::PINNSettings)
   # Find the maximum matrix dimensions for input layer size
-  max_input_size = maximum(prod(size(matrix)) for matrix in settings.ode_matrix) # I think this might be used in src/main.jl
+  # alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert to string
+
+  max_input_size = maximum(prod(size(eval(Meta.parse(alpha_matrix_key)))) for (alpha_matrix_key, series_coeffs) in settings.ode_matrices) # AHHHHH! what a messs
 
   # Define the neural network architecture using the settings
   coeff_net = Lux.Chain(
@@ -122,6 +125,9 @@ end
 # ---------------------------------------------------------------------------
 # Step 6: Define the Loss Function
 # ---------------------------------------------------------------------------
+
+# This can change over time. Personaly I am interested in taking the dot product 
+# between the guess and the real coefficients.
 
 function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat)
   # Run the network to get the current vector of power series coefficients
@@ -148,16 +154,23 @@ end
 # Step 7: Global Loss Function
 # ---------------------------------------------------------------------------
 
-function global_loss(p_net, settings::PINNSettings, data_dict, coeff_net, st)
-  total_loss = F(0.0)
 
-  for matrix in settings.ode_matrix
-    # Process each matrix at its natural size
-    matrix_flat = reshape(matrix, :, 1)  # Column vector for network
-    local_loss = loss_fn(p_net, data_dict[matrix], coeff_net, st, matrix_flat)
-    total_loss += local_loss
+
+function global_loss(p_net, settings::PINNSettings, coeff_net, st) # remove data_dict?
+  total_loss = F(0.0)
+  println(settings.ode_matrices) # print out the ode_matrices dictionary
+  for (alpha_matrix_key, series_coeffs) in settings.ode_matrices 
+    println("The loss is lossing...")
+    println("The current  ODE I am calculating the loss for", alpha_matrix_key)
+    alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert from string to matrix # the error is also stemming from here too? 
+    # matrix_flat = reshape(alpha_matrix_key, :, 1)  # Column vector for network, flattening. For some reason this does not work
+    matrix_flat = vec(alpha_matrix)  # Flatten to a column vector
+    local_loss = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat) # calculate the local loss
+    println(local_loss)
+    total_loss += local_loss # add up the local loss to find the global loss
   end
 
+  println(total_loss)
   return total_loss
 end
 
@@ -165,29 +178,30 @@ end
 # Step 8: Training Function
 # ---------------------------------------------------------------------------
 
-function train_pinn(settings::PINNSettings, data_dict)
+function train_pinn(settings::PINNSettings)
   # Initialize network
   coeff_net, p_init_ca, st = initialize_network(settings)
 
   # Create wrapper function for optimization
   function loss_wrapper(p_net, _)
-    return global_loss(p_net, settings, data_dict, coeff_net, st)
+    return global_loss(p_net, settings, coeff_net, st) # one location where the error is coming from
   end
 
   # ---------------- Stage 1: ADAM ----------------
   println("Starting Adam training...")
-  p_one = ProgressBar.ProgressBarSettings(settings.maxiters_adam, "Adam Training...")
+  p_one = ProgressBar.ProgressBarSettings(settings.maxiters_adam, "Adam Training...") # the progress bar has not been called...
   callback_one = ProgressBar.Bar(p_one)
 
   # Define the optimization problem
   adtype = Optimization.AutoZygote()
-  optfun = OptimizationFunction(loss_wrapper, adtype)
+  optfun = OptimizationFunction(loss_wrapper, adtype) # this is definitely working because the loss is lossing...
   prob = OptimizationProblem(optfun, p_init_ca)
 
+  # error is coming from here too?
   # Solve with Adam optimizer
   res = solve(prob,
     OptimizationOptimisers.Adam(F(1e-3));
-    callback=callback_one,
+    callback=callback_one, # this is for the progress bar 
     maxiters=settings.maxiters_adam)
 
   # ---------------- Stage 2: LBFGS ----------------

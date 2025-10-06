@@ -144,13 +144,11 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
       end
 
       # use alpha matrix as key, series coefficients as value within the dataset batch
-      existing_data[dataset_key][string(α_matrix)] = series_coeffs
+      existing_data[dataset_key][string(α_matrix)] = series_coeffs # this is the source of our problems
 
       isdir("data") || mkpath("data") # ensure a data folder exists
       json_string = JSON.json(existing_data)
       write("./data/dataset.json", json_string)
-
-      println("\nDataset generation complete!")
     catch e
       println("failed to solve this ode: ", e)
       continue

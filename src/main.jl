@@ -11,7 +11,7 @@ using .ProgressBar
 include("../scripts/PINN.jl")
 using .PINN
 
-function setup_training_run(run_number::Int64, batch_size::Any)
+function create_training_run_dirs(run_number::Int64, batch_size::Any)
   """
   Creates a training run directory and output file with specified naming convention.
   Args:
@@ -69,9 +69,8 @@ function init_batches(batch_sizes::Array{Int})
   """
   for (batch_index, k) in enumerate(batch_sizes)
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
-
     run_number_formatted = lpad(batch_index, 2, '0')
-    s::Settings = Plugboard.Settings(2, 2, k)
+    s::Settings = Plugboard.Settings(1, 0, k)
 
     println("\n" * "="^50)
     println("Generating datasets for training run $run_number_formatted")
@@ -81,10 +80,7 @@ function init_batches(batch_sizes::Array{Int})
     Plugboard.generate_random_ode_dataset(s, batch_index) # training data
     # Plugboard.generate_random_ode_dataset(s, batch_index) # maybe create the validation JSON data
     # Create the training dirs
-    println("\n" * "="^50)
-    println("Starting Training Run $run_number_formatted")
-    println("="^50)
-    setup_training_run(batch_index, k)
+    create_training_run_dirs(batch_index, k)
   end
 end
 
@@ -99,42 +95,20 @@ function run_training_sequence(batch_sizes::Array{Int})
 
   # Load the generated dataset
   dataset = JSON.parsefile("./data/dataset.json")
-
-  # Loop through each entry in the JSON object
-  # This is the code that is not working. Alpha matrix is seen as a number.
+  
+  # loop through each training run and pass in the series coefficients 
+  # and its corresponding ODE embedding
   for (run_idx, inner_dict) in dataset
-    println(inner_dict)
-    for (alpha_matrix_key, series_coeffs) in inner_dict
-      # TODO: We need to setup the pinn training here
-      println("Series coefficients that will be trained soon...: $series_coeffs") # lil error checking
-      println("This is the alpha matrix: $alpha_matrix_key")
-      println("Current training run: $run_idx")
+    settings = PINNSettings(64, 1234, inner_dict, 500, 100) # 64 neurons, blah blah
+    # Train the network
+    p_trained, coeff_net, st = train_pinn(settings) # this is where we call the training process
+    sample_matrix = [1; -1] # this is the matrix we test the solution for. 
+    # The solution is y = e^x + C
 
-      # Convert string key back to matrix
-      alpha_matrix = eval(Meta.parse(alpha_matrix_key))
-      settings = PINNSettings(64, 1234, alpha_matrix, 500, 100)
-
-      #=
-      # Train the network
-      p_trained, coeff_net, st = train_pinn(settings, series_coeffs)
-      sample_matrix = [1;
-        1]
-
-      # Evaluate results
-      a_learned, u_func = evaluate_solution(p_trained, coeff_net, st, sample_matrix)
-      println(a_learned)
-      println(u_func)
-
-      =#
-
-
-
-      # TODO: Add the training implementation for the PINN Here
-      # PINN training here using:
-      # - alpha_matrix (converted from key)
-      # - series_coeffs as target
-      # - ASK VICTOR HOW TO IMPLEMENT THE PINN WITH THIS
-    end
+    # Evaluate results
+    a_learned, u_func = evaluate_solution(p_trained, coeff_net, st, sample_matrix)
+    println(a_learned)
+    println(u_func)
   end
 end
 
@@ -142,7 +116,7 @@ end
 # each entry of the array is an interger that determines the # of examples generated in 
 # each training run
 
-batch = [1, 1, 1]
+batch = [1, 2, 100]
 
 # Uncomment to run the example
-run_training_sequence(batch)
+run_training_sequence(batch) # we first start here with the "foreign call" error
