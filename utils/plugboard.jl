@@ -9,6 +9,7 @@ struct Settings
   ode_order::Int
   poly_degree::Int
   dataset_size::Int
+  data_dir::String
 end
 
 function get_user_inputs()
@@ -125,12 +126,12 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
     end
     try
       # output taylor series and its coefficients
-      taylor_series, series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, 10)
+      taylor_series, series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, 5)
       println("truncated taylor series: ", taylor_series)
       println("truncated series coefficients: ", series_coeffs)
       # read existing data
-      existing_data = if isfile("./data/dataset.json")
-        JSON.parsefile("./data/dataset.json")
+      existing_data = if isfile(s.data_dir)
+        JSON.parsefile(s.data_dir)
       else
         Dict()
       end
@@ -148,7 +149,7 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
 
       isdir("data") || mkpath("data") # ensure a data folder exists
       json_string = JSON.json(existing_data)
-      write("./data/dataset.json", json_string)
+      write(s.data_dir, json_string)
     catch e
       println("failed to solve this ode: ", e)
       continue

@@ -31,7 +31,6 @@ function Bar(s::ProgressBarSettings)
 
     return false # Return false to continue the optimization.
   end
-  println("PROGRESS BAR IS WORKING!!!!")
   return callback
 end
 

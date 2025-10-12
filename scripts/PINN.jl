@@ -34,6 +34,9 @@ using TaylorSeries
 include("../utils/ProgressBar.jl")
 using .ProgressBar
 
+include("../utils/ConvertStringToMatrix.jl")
+using .ConvertStringToMatrix
+
 # Ensure a "data" directory exists for saving plots.
 isdir("data") || mkpath("data")
 
@@ -80,20 +83,22 @@ domains = [x ∈ Interval(x_left, x_right)]
 # ---------------------------------------------------------------------------
 
 # We will approximate the solution u(x) with a truncated power series of degree N.
-N = 10 # The degree of the highest power term in the series.
+N = 5 # The degree of the highest power term in the series.
 
 # Pre-calculate factorials (0!, 1!, ..., N!) for use in the series.
-fact = factorial.(0:N)
 
-num_supervised = 10 # The number of coefficients we will supervise during training.
-supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
+fact = factorial.(big.(0:N))
+
+num_supervised = 5 # The number of coefficients we will supervise during training.
 
 # Create a set of points inside the domain to enforce the ODE. These are called "collocation points".
-num_points = 1000
+num_points = 10
 xs = range(x_left, x_right, length=num_points)
 
-# Define a weight for the boundary condition part of the loss.
-bc_weight = F(100.0)
+# Define a weight for the boundary condition, surpivesed coefficients, and the pde
+supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
+bc_weight = F(10.0)
+pde_weight = F(0.0)
 
 # ---------------------------------------------------------------------------
 # Step 5: Initialize Neural Network with Settings
@@ -106,10 +111,19 @@ function initialize_network(settings::PINNSettings)
   max_input_size = maximum(prod(size(alpha_matrix_key)) for (alpha_matrix_key, series_coeffs) in settings.ode_matrices) # AHHHHH! what a messs
 
   # Define the neural network architecture using the settings
+  #=
   coeff_net = Lux.Chain(
-    Lux.Dense(max_input_size, settings.neuron_num, σ), # Hidden layer with configurable neurons
-    Lux.Dense(settings.neuron_num, N + 1)              # Output layer with N+1 coefficients
+    Lux.Dense(max_input_size, settings.neuron_num, σ),      # First hidden layer
+    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Second hidden layer
+    Lux.Dense(settings.neuron_num, N + 1)                   # Output layer
   )
+  =#
+
+  coeff_net = Lux.Chain(
+  Lux.Dense(max_input_size, settings.neuron_num, σ),      # First hidden layer
+  Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Second hidden layer
+  Lux.Dense(settings.neuron_num, N + 1)              # N+1? # Output layer with N+1 coefficients
+ )
 
   # Initialize the network's parameters with the specified seed
   rng = Random.default_rng()
@@ -119,10 +133,6 @@ function initialize_network(settings::PINNSettings)
   # Wrap the initial parameters in a ComponentArray
   p_init_ca = ComponentArray(p_init)
 
-  println("Intializing Neural Network...")
-  println("Parameters: ", p_init_ca)
-  println("Coefficient Network: ", coeff_net)
-
   return coeff_net, p_init_ca, st
 end
 
@@ -130,28 +140,50 @@ end
 # Step 6: Define the Loss Function
 # ---------------------------------------------------------------------------
 
+
 # This can change over time. Personaly I am interested in taking the dot product 
 # between the guess and the real coefficients.
 
-function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat)
+function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition)
   # Run the network to get the current vector of power series coefficients
   a_vec = first(coeff_net(ode_matrix_flat, p_net, st))[:, 1]
 
   # Define the approximate solution and its derivatives using the coefficients
-  u_approx(x) = sum(a_vec[i] * x^(i - 1) / fact[i] for i in 1:N+1)
-  Du_approx(x) = sum(a_vec[i] * x^(i - 2) / fact[i-1] for i in 2:N+1) # First derivative
+  # u_approx(x) = sum(a_vec[i] * x^(i - 1) for i in 1:N+1)
+  # Du_approx(x) = sum(a_vec[i] * x^(i - 2) for i in 2:N+1) # First derivative
 
-  # Calculate the loss from the ODE itself
-  loss_pde = sum(abs2, Du_approx(xi) + u_approx(xi) - 0 for xi in xs) / num_points
+  # For the ODE: a*y' + b*y = 0
+  # This can be written as: b*y + a*y' = 0
+  # So ode_matrix_flat should be [b, a]
+
+  function ode_residual(x, ode_matrix_flat, a_vec, N)
+    return sum(
+      ode_matrix_flat[order + 1] * (
+        order == 0 ? 
+        sum(a_vec[i] * x^(i - 1) for i in 1:N+1) :
+        sum(
+            prod((i - 1 - j) for j in 0:(order - 1)) * a_vec[i] * x^(i - 1 - order)
+            for i in (order + 1):(N + 1)
+        )
+      )
+      for order in 0:(length(ode_matrix_flat) - 1)
+    )
+  end
+
+  # Define u_approx (the 0th derivative, which is y) with coefficient b
+  u_approx(x, a_vec, N, ode_matrix_flat) = ode_matrix_flat[1] * sum(a_vec[i] * x^(i - 1) for i in 1:N+1)
+
+  # Calculate the PDE loss (residual of the ODE)
+  loss_pde = sum(abs2, ode_residual(xi, ode_matrix_flat, a_vec, N) for xi in xs) / num_points
 
   # Calculate the loss from the boundary conditions
-  loss_bc = abs2(u_approx(x_left) - F(0.0))
+  loss_bc = abs2(ode_matrix_flat[1] * u_approx(x_left, a_vec, N, ode_matrix_flat) - F(boundary_condition))
 
   # Calculate supervised loss using the plugboard coefficients
   loss_supervised = sum(abs2, a_vec[1:num_supervised] - data) / num_supervised
 
   # The total loss is a weighted sum of the components
-  return loss_pde + bc_weight * loss_bc + supervised_weight * loss_supervised
+  return loss_pde * pde_weight + bc_weight * loss_bc + supervised_weight * loss_supervised
 end
 
 # ---------------------------------------------------------------------------
@@ -160,27 +192,33 @@ end
 
 function global_loss(p_net, settings::PINNSettings, coeff_net, st)
   total_loss = F(0.0)
+  num_of_training_examples = length(settings.ode_matrices)
   # println(settings.ode_matrices) # print out the ode_matrices dictionary
   # println("The global loss is globally lossing...")
-  for (alpha_matrix_key, series_coeffs) in settings.ode_matrices 
+  for (alpha_matrix_key, series_coeffs) in settings.ode_matrices
     # println("The current  ODE I am calculating the loss for right now: ", alpha_matrix_key)
     # println("The local loss is locally lossing...")
     # alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert from string to matrix 
-    # the error is coming from line 170. Zygote does not like us editing this in memory perhaps?
-    # matrix_flat = reshape(alpha_matrix_key, :, 1)  # Column vector for network, flattening. For some reason this does not work
     matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
-    local_loss = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat) # calculate the local loss
+    boundary_condition = series_coeffs[1] 
+    local_loss = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat, boundary_condition) # calculate the local loss
      # println(local_loss)
     total_loss += local_loss # add up the local loss to find the global loss
   end
 
+  normalized_loss = total_loss / num_of_training_examples
+
   # println(total_loss)
-  return total_loss
+  return normalized_loss
 end
 
 # ---------------------------------------------------------------------------
 # Step 8: Training Function
 # ---------------------------------------------------------------------------
+
+#=
+We train the PINN on the training dataset and return the network
+=#
 
 function train_pinn(settings::PINNSettings)
   # Initialize network
@@ -235,24 +273,35 @@ end
 # analytic_sol_func(x) = (pi * x * (-x + (pi^2) * (2x - 3) + 1) - sin(pi * x)) / (pi^3) # We replace with our training examples
 # This is then represented as a TaylorSeries 
 
-function evaluate_solution(p_trained, coeff_net, st, ode_matrix_sample, analytic_sol_func=nothing)
-  # Get learned coefficients for a sample matrix
-  max_input_size = prod(size(ode_matrix_sample)) # remove?
-  matrix_flat = reshape(ode_matrix_sample, :, 1)
 
-  a_learned = first(coeff_net(matrix_flat, p_trained, st))[:, 1]
-
-  # println("Learned coefficients:")
-  # display(a_learned)
+function evaluate_solution(p_trained, coeff_net, st, benchmark_dataset)
+  # TODO:loop through the different benchmark runs that we have
+  # We have to make sure that these datasets have the same number 
+  # of training runs.
 
   # Create prediction function
-  u_predict_func(x) = sum(a_learned[i] * x^(i - 1) / fact[i] for i in 1:N+1)
+  # TODO: We have to loop through each benchmark run and create the
+  # function that is predicted by the model and the real function from the plugboard
+  
+  # Convert the alpha matrix keys from strings to matrices
+  # Because zygote is being mean
+  ConvertSettings = StringToMatrixSettings(benchmark_dataset)
+  converted_benchmark_dataset = ConvertStringToMatrix.convert(ConvertSettings)
+ 
+  for (alpha_matrix_key, benchmark_series_coeffs) in converted_benchmark_dataset
+    matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
+    # this is the guess that the trained model would give
 
-  if analytic_sol_func !== nothing
+    a_learned = first(coeff_net(matrix_flat, p_trained, st))[:, 1] # extract learned coefficients
+    u_real_func(x) = sum(benchmark_series_coeffs[i] * x^(i - 1) for i in 1:N)
+    
+    # this is the taylor series that is predicted by the PINN
+    u_predict_func(x) = sum(a_learned[i] * x^(i - 1) for i in 1:N) 
+
     # Generate plotting points
     x_plot = x_left:F(0.01):x_right
     # It makes sense that this has to be replaced because this is used for plotting the error as well
-    u_real = analytic_sol_func.(x_plot) # instead we have to make this be plugboard coefficients k
+    u_real = u_real_func.(x_plot) # instead we have to make this be plugboard coefficients k
     u_predict = u_predict_func.(x_plot)
 
     # Plot comparison
@@ -277,9 +326,10 @@ function evaluate_solution(p_trained, coeff_net, st, ode_matrix_sample, analytic
     println("\nPlots saved to 'data' directory.")
     println("- solution_comparison.png")
     println("- error.png")
+    
+    println("PINN's guess for coefficients: ", a_learned)
+    println("The REAL coefficients: ", benchmark_series_coeffs)
   end
-
-  return a_learned, u_predict_func
 end
 
 # ---------------------------------------------------------------------------

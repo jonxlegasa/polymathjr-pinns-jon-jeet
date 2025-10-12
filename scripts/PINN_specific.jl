@@ -96,7 +96,6 @@ domains = [x ∈ Interval(x_left, x_right)]
 # For verification, we define the true, known analytic solution to the ODE.
 # This will be used to calculate the error of our approximation.
 # analytic_sol_func(x) = (pi * x * (-x + (pi^2) * (2x - 3) + 1) - sin(pi * x)) / (pi^3) # We replace with our training examples
-
 # TODO: Put the training data
 # benchmark baby!!!!
 # This could be a validator function
@@ -107,12 +106,12 @@ domains = [x ∈ Interval(x_left, x_right)]
 
 # We will approximate the solution u(x) with a truncated power series of degree N.
 # u(x) ≈ a₀ + a₁x/1! + a₂x²/2! + ... + aₙxⁿ/N!
-N = 10 # The degree of the highest power term in the series.
+N = 1 # The degree of the highest power term in the series.
 
 # Pre-calculate factorials (0!, 1!, ..., N!) for use in the series.
 fact = factorial.(0:N)
 
-num_supervised = 5 # The number of coefficients we will supervise during training.
+num_supervised = 1 # The number of coefficients we will supervise during training.
 supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
 
 #= This is where I have to replace the approximation to the ODE with the
@@ -207,8 +206,6 @@ function global_loss()
   # the sum of the local loss 
 
 end
-
-
 
 
 # ---------------------------------------------------------------------------

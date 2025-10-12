@@ -8,9 +8,16 @@ using .Plugboard
 include("../utils/ProgressBar.jl")
 using .ProgressBar
 
+include("../utils/ConvertStringToMatrix.jl")
+using .ConvertStringToMatrix
+
 include("../scripts/PINN.jl")
 using .PINN
 
+#=
+This function does the following:
+Create training run directories
+=#
 function create_training_run_dirs(run_number::Int64, batch_size::Any)
   """
   Creates a training run directory and output file with specified naming convention.
@@ -55,10 +62,13 @@ function create_training_run_dirs(run_number::Int64, batch_size::Any)
   return training_run_dir, output_file
 end
 
+# These are the training and benchmark directories
+training_data_dir = "./data/training_dataset.json"
+benchmark_data_dir = "./data/benchmark_dataset.json"
+
 #=
-# Notes: 
-#  We want each training run to follow these batch sizes [1, 10, 50, 100]
-#   lets make this an array babyyy
+This function initializes training run batches
+and creates training and benchmark dataset
 =#
 
 function init_batches(batch_sizes::Array{Int})
@@ -67,22 +77,31 @@ function init_batches(batch_sizes::Array{Int})
   Args:
       batch_sizes: Array of integers representing different batch sizes
   """
+
+  # We only generate one benchmark dataset
+  # benchmark_dataset_setting::Settings = Plugboard.Settings(1, 0, 1, benchmark_data_dir)
+  # Plugboard.generate_random_ode_dataset(benchmark_dataset_setting, 1) 
+
+  # generate training datasets and benchmarks 
   for (batch_index, k) in enumerate(batch_sizes)
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
     run_number_formatted = lpad(batch_index, 2, '0')
-    s::Settings = Plugboard.Settings(1, 0, k)
+    training_dataset_setting::Settings = Plugboard.Settings(1, 0, k, training_data_dir)
 
     println("\n" * "="^50)
-    println("Generating datasets for training run $run_number_formatted")
+    println("Generating datasets for training and benchmarks $run_number_formatted")
     println("="^50)
     println("Number of examples: ", k)
-
-    Plugboard.generate_random_ode_dataset(s, batch_index) # training data
-    # Plugboard.generate_random_ode_dataset(s, batch_index) # maybe create the validation JSON data
-    # Create the training dirs
-    create_training_run_dirs(batch_index, k)
+    
+    # Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # training data
+   # create_training_run_dirs(batch_index, k) # Create the training dirs
   end
 end
+
+#= 
+This function takes the batches and their sizes and runs
+the PINN on the training dataset
+=#
 
 function run_training_sequence(batch_sizes::Array{Int})
   """
@@ -93,36 +112,34 @@ function run_training_sequence(batch_sizes::Array{Int})
   # Initialize all batches first
   init_batches(batch_sizes)
 
-  # Load the generated dataset
-  dataset = JSON.parsefile("./data/dataset.json")
-  
+  # we only load the training data dir here
+  training_dataset = JSON.parsefile(training_data_dir)
+  benchmark_dataset = JSON.parsefile(benchmark_data_dir)
+
   # loop through each training run and pass in the series coefficients 
   # and its corresponding ODE embedding
-  for (run_idx, inner_dict) in dataset
-
-    outer_dict = Dict{Matrix{Int}, Any}()
-  
+  for (run_idx, inner_dict) in training_dataset
     # Convert the alpha matrix keys from strings to matrices
     # Because zygote is being mean
-    for (alpha_matrix_key, series_coeffs) in inner_dict
-      # println("The current  ODE I am calculating the loss for right now: ", alpha_matrix_key)
-      # println("The local loss is locally lossing...")
-      alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert from string to matrix 
-      outer_dict[alpha_matrix] = series_coeffs
-    end
+    ConvertSettings = StringToMatrixSettings(inner_dict)
+    converted_dict = ConvertStringToMatrix.convert(ConvertSettings)
 
-    settings = PINNSettings(64, 1234, outer_dict, 500, 100) # 64 neurons, blah blah
+    #=
+    This establishes settings for PINN. 64 neurons, a random seed to init
+    parameters, and iterations for training.
+    =#
+    settings = PINNSettings(5, 1234, converted_dict, 500, 100)
+
     # Train the network
     p_trained, coeff_net, st = train_pinn(settings) # this is where we call the training process
-   
-    # TODO: Call the plugboard once here without training directories (validation runs)
-    sample_matrix = [1; -1] # this is the matrix we test the solution for. 
-    # The solution is y = e^x + C
-    # CALL GLOBAL LOSS HERE WITH 
-    # Evaluate results
-    a_learned, u_func = evaluate_solution(p_trained, coeff_net, st, sample_matrix)
-    # println(a_learned)
-    # println(u_func)
+ 
+    #=
+    this is the matrix we test the solution for. 
+    The solution is y = Ae^x
+    CALL GLOBAL LOSS HERE WITH 
+    =#
+
+    evaluate_solution(p_trained, coeff_net, st, benchmark_dataset["01"])
   end
 end
 
@@ -130,7 +147,7 @@ end
 # each entry of the array is an interger that determines the # of examples generated in 
 # each training run
 
-batch = [1, 2, 3]
+batch = [1]
 
 # Uncomment to run the example
 run_training_sequence(batch) # we first start here with the "foreign call" error
