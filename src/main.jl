@@ -1,5 +1,7 @@
 using Dates
 using JSON
+using CSV
+using DataFrames
 
 # Include util functions
 include("../utils/plugboard.jl")
@@ -8,10 +10,10 @@ using .Plugboard
 include("../utils/ProgressBar.jl")
 using .ProgressBar
 
-include("../utils/ConvertStringToMatrix.jl")
-using .ConvertStringToMatrix
+include("../utils/helper_funcs.jl")
+using .helper_funcs
 
-include("../utils/TwoDGridSearchOnWeights.jl")
+include("../utils/two_d_grid_search_hyperparameters.jl")
 using .TwoDGridSearchOnWeights
 
 include("../scripts/PINN.jl")
@@ -106,7 +108,7 @@ function init_batches(batch_sizes::Array{Int})
     matrices_to_be_added = Matrix{Int}[
       alpha_matrix_key 
       for (run_idx, inner_dict) in training_dataset
-      for (alpha_matrix_key, series_coeffs) in ConvertStringToMatrix.convert(inner_dict)
+      for (alpha_matrix_key, series_coeffs) in convert(inner_dict)
     ]
     =#
 
@@ -223,14 +225,15 @@ function run_training_sequence(batch_sizes::Array{Int})
       joinpath(iteration_dir, "coefficient_comparison.png"),
       joinpath(iteration_dir, "adam_iteration_and_loss_comparison.png"),
       joinpath(iteration_dir, "lbfgs_iteration_and_loss_comparison.png"),
+      joinpath(iteration_dir, "iteration_plot.png"),
       joinpath(iteration_dir, "iteration_output.csv"),
     ]
-    converted_dict = ConvertStringToMatrix.convert(inner_dict)
-    settings = PINNSettings(50, 1234, converted_dict, 500, 500, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+    converted_dict = convert_plugboard_keys(inner_dict)
+    settings = PINNSettings(5, 1234, converted_dict, 500, 500, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
 
     # Train the network
     p_trained, coeff_net, st = train_pinn(settings, data_directories[5]) # this is where we call the training process
-    function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], data_directories)
+    function_error = evaluate_solution(settings, p_trained, coeff_net, st, training_dataset["01"], data_directories)
     println(function_error)
   end
 
@@ -251,6 +254,7 @@ function run_training_sequence(batch_sizes::Array{Int})
   =#
 
   println("Good luck ;)")
+
 
 end
 

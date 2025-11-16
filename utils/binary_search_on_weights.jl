@@ -3,8 +3,8 @@ module ExperimentsForWeights
 using Dates
 using JSON
 
-include("../utils/ConvertStringToMatrix.jl")
-using .ConvertStringToMatrix
+include("../utils/helper_funcs.jl")
+using .helper_funcs
 
 include("../scripts/PINN.jl")
 using .PINN
@@ -96,7 +96,7 @@ function search(training_dataset, weight_name::Symbol, weight_range::Tuple{Int, 
     # Train with current weight configuration
     for (run_idx, inner_dict) in training_dataset
       ConvertSettings = StringToMatrixSettings(inner_dict)
-      converted_dict = ConvertStringToMatrix.convert(ConvertSettings)
+      converted_dict = convert_plugboard_keys(ConvertSettings)
       settings = PINNSettings(5, 1234, converted_dict, 500, 500, 
                               num_supervised, N, 10, x_left, x_right, 
                               supervised_weight, bc_weight, pde_weight, xs)

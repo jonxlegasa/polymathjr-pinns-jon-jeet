@@ -6,8 +6,8 @@ using Statistics
 include("../scripts/PINN.jl")
 using .PINN
 
-include("../utils/ConvertStringToMatrix.jl")
-using .ConvertStringToMatrix
+include("../utils/helper_funcs.jl")
+using .helper_funcs
 
 """
   GridSearchResult
@@ -50,7 +50,7 @@ function evaluate_weight_configuration(training_dataset, benchmark_dataset, weig
 
   # Train with current weight configuration
   for (run_idx, inner_dict) in training_dataset
-    converted_dict = ConvertStringToMatrix.convert(inner_dict)
+    converted_dict = convert_plugboard_keys(inner_dict)
     settings = PINNSettings(50, 1234, converted_dict, 500, 500,
                            num_supervised, N, 10, x_left, x_right,
                            supervised_weight, bc_weight, pde_weight, xs)

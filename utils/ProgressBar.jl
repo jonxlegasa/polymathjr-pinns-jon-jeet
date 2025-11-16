@@ -15,6 +15,7 @@ function Bar(s::ProgressBarSettings)
   # We use it to update our progress bar.
   global iter_count = 0
   global last_shown_values = 0
+  println(last_shown_values)
   callback = function (p, l)
     iter_count += 1
     # If the current iteration is a milestone (1, 100, 200, etc.),
