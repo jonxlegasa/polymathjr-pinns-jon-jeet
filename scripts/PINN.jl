@@ -284,7 +284,7 @@ function train_pinn(settings::PINNSettings, csv_file)
 
   println("\nTraining complete.")
 
-  write_buffer_to_csv(csv_file)
+  write_buffer_to_csv(csv_file) # write from buffer to csv
 
   return p_trained, coeff_net, st
 end
@@ -373,7 +373,6 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       label="Benchmark",
       xlabel="Coefficient Index",
       ylabel="Coefficient Value",
-      linewidth=2,
       legend=:best)
 
     plot!(coefficient_comparison, indices, a_learned[1:n_length_benchmark],
@@ -439,6 +438,7 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       title="Global Loss per Global Loss Call",
       xlabel="Loss Call",
       ylabel="Global Loss",
+      yscale=:log10
     )
 
     total_bc_loss_plot = plot(
@@ -446,8 +446,7 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       total_loss_bc,
       title="Global Boundary Condition Loss per Global Loss Call",
       xlabel="Loss Call",
-      ylabel="BC Loss",
-    )
+      ylabel="BC Loss", yscale=:log10)
 
     total_pde_loss_plot = plot(
       1:length(total_loss_pde),
@@ -455,6 +454,7 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       title="Global PDE Loss per Global Loss Call",
       xlabel="Loss Call",
       ylabel="PDE Loss",
+      yscale=:log10
     )
 
     total_supervised_loss_plot = plot(
@@ -462,7 +462,7 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       total_loss_supervised,
       title="Global Supervised Loss per Global Loss Call",
       xlabel="Loss Call",
-      ylabel="Supervised Loss",
+      ylabel="Supervised Loss", yscale=:log10
     )
 
     iteration_plot = plot(
@@ -471,7 +471,8 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       total_pde_loss_plot,
       total_supervised_loss_plot,
       layout=(4, 1),
-      size=(1000, 1000)
+      size=(1000, 1000),
+      yscale=:log10
     )
 
     # Save plots

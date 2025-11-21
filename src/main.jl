@@ -19,6 +19,9 @@ using .TwoDGridSearchOnWeights
 include("../scripts/PINN.jl")
 using .PINN
 
+include("../utils/training_schemes.jl")
+using .training_schemes
+
 #=
 This function does the following:
 Create training run directories
@@ -91,32 +94,33 @@ function init_batches(batch_sizes::Array{Int})
   for (batch_index, k) in enumerate(batch_sizes)
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
     run_number_formatted = lpad(batch_index, 2, '0')
-    # training_dataset_setting::Settings = Plugboard.Settings(1, 0, k, training_data_dir)
+    training_dataset_setting::Settings = Plugboard.Settings(1, 0, k, training_data_dir)
 
     println("\n" * "="^50)
     println("Generating datasets for training and benchmarks $run_number_formatted")
     println("="^50)
     println("Number of examples: ", k)
 
-    # Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # create training data
+    #=
+
+    Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # create training data
     # create_training_run_dirs(batch_index, k) # Create the training dirs
 
-    # training_dataset = JSON.parsefile(training_data_dir)
+    training_dataset = JSON.parsefile(training_data_dir)
 
     # add the ode matrices together
-    #= 
     matrices_to_be_added = Matrix{Int}[
-      alpha_matrix_key 
+      alpha_matrix_key
       for (run_idx, inner_dict) in training_dataset
-      for (alpha_matrix_key, series_coeffs) in convert(inner_dict)
+      for (alpha_matrix_key, series_coeffs) in convert_plugboard_keys(inner_dict)
     ]
+
+    linear_combination_of_matrices = reduce(+, matrices_to_be_added)
+    println("Linear combos: ", linear_combination_of_matrices)
+
+    benchmark_dataset_setting::Settings = Plugboard.Settings(1, 0, 1, benchmark_data_dir)
+    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
     =#
-
-    # linear_combination_of_matrices = reduce(+, matrices_to_be_added)
-    # println("Linear combos: ", linear_combination_of_matrices)
-
-    # benchmark_dataset_setting::Settings = Plugboard.Settings(1, 0, 1, benchmark_data_dir)
-    # Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
   end
 end
 
@@ -140,25 +144,8 @@ function run_training_sequence(batch_sizes::Array{Int})
 
   F = Float32
   # We will approximate the solution u(x) with a truncated power series of degree N.
-  N = 5 # The degree of the highest power term in the series.
-
-  # Pre-calculate factorials (0!, 1!, ..., N!) for use in the series.
-  num_supervised = 5 # The number of coefficients we will supervise during training.
-  # Create a set of points inside the domain to enforce the ODE. These are called "collocation points".
-  num_points = 10
-
-  # Domain boundaries
-  x_left = F(0.0)  # Left boundary of the domain
-  x_right = F(1.0) # Right boundary of the domain
-
-  # Define a weight for the boundary condition, surpivesed coefficients, and the pde
-  supervised_weight = F(0.6)  # Weight for the supervised loss term in the total loss function.
-  bc_weight = F(0.1)# for now we are going to test the two of these to zero
-  pde_weight = F(0.0)
-
-  xs = range(x_left, x_right, length=num_points)
-
   # BS on pde_weight with supervised and bc fixed at 1.0
+
   #=
   binary_search_weights(
     training_dataset,
@@ -175,44 +162,32 @@ function run_training_sequence(batch_sizes::Array{Int})
   )
   =#
 
-  #=
-  # Search on supervised_weight
-  binary_search_weights(
-    training_dataset,
-    :supervised,
-    (0, 100),
-    20,
-    fixed_weights = (bc=bc_weight, pde=pde_weight),
-    num_supervised = num_supervised,
-    N = N,
-    x_left = x_left,
-    x_right = x_right,
-    xs = xs,
-    base_data_dir = "data"
-  )
+  N = 5 # The degree of the highest power term in the series.
 
-  =#
+  # Pre-calculate factorials (0!, 1!, ..., N!) for use in the series.
+  num_supervised = 5 # The number of coefficients we will supervise during training.
+  # Create a set of points inside the domain to enforce the ODE. These are called "collocation points".
+  num_points = 10
 
-  #=
-  # Search on bc_weight
-  binary_search_weights(
-    training_dataset,
-    :bc,
-    (0, 100),
-    20,
-    fixed_weights = (supervised=supervised_weight, pde=pde_weight),
-    num_supervised = num_supervised,
-    N = N,
-    x_left = x_left,
-    x_right = x_right,
-    xs = xs,
-    base_data_dir = "data"
-  )
+  # Domain boundaries
+  x_left = F(0.0)  # Left boundary of the domain
+  x_right = F(1.0) # Right boundary of the domain
 
-  =#
+  # Define a weight for the boundary condition, surpivesed coefficients, and the pde
+  supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
+  bc_weight = F(1.0)# for now we are going to test the two of these to zero
+  pde_weight = F(1.0)
 
-  # loop through each training run and pass in the series coefficients 
-  # and its corresponding ODE embedding
+  xs = range(x_left, x_right, length=num_points)
+
+  neurons_counts = Dict("five_neurons" => 5, "ten_neurons" => 10, "twenty_neurons" => 20)
+  scaling_neurons_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+
+  # this increase the neuron count in an iterative process
+  scaling_neurons(scaling_neurons_settings, neurons_counts)
+
+  #= This code is for the classic training scheme for no change in neuron count or whatever
+
   for (run_idx, inner_dict) in training_dataset
     # Convert the alpha matrix keys from strings to matrices
     # Because zygote is being mean
@@ -229,7 +204,7 @@ function run_training_sequence(batch_sizes::Array{Int})
       joinpath(iteration_dir, "iteration_output.csv"),
     ]
     converted_dict = convert_plugboard_keys(inner_dict)
-    settings = PINNSettings(5, 1234, converted_dict, 5000, 2, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+    settings = PINNSettings(5, 1234, converted_dict, 1, 1, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
 
     # Train the network
     p_trained, coeff_net, st = train_pinn(settings, data_directories[6]) # this is where we call the training process
@@ -240,22 +215,24 @@ function run_training_sequence(batch_sizes::Array{Int})
   #=
   result = grid_search_2d(
     training_dataset,
-    benchmark_dataset,
-    :pde, (0.1, 1.0),  # supervised weight range
+    training_dataset,
+    :bc, (0.1, 1.0),  # supervised weight range
     :supervised, (0.1, 1.0),           # bc weight range
-    10,                          # 10x10 grid = 100 evaluations
-    fixed_weights=(bc=0.1,),
+    100,                          # 10x10 grid = 100 evaluations
+    fixed_weights=(pde=1.0,),
     num_supervised=5,
     N=5,
     x_left=0.0f0,
     x_right=1.0f0,
     xs=xs
   )
+
+  =#
+
   =#
 
   println("Good luck ;)")
-
-
+  # println(result)
 end
 
 
