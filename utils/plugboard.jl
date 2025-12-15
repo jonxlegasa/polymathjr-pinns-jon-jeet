@@ -162,7 +162,7 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
   end
 end
 
-# Generate a specific benchmark
+# Generate a specific benchmark from one alpha matrix
 function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix::Matrix{Int64})
   ode_order = s.ode_order
   poly_degree = s.poly_degree
@@ -173,7 +173,8 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
   initial_conditions = Float64[]
   for i in 0:(ode_order-1)
     if i == 0
-      push!(initial_conditions, rand(1:5))  # y(0) = a_0
+      push!(initial_conditions, 1)  # y(0) = a_0, we will set thie init condition to be 1
+      # push!(initial_conditions, rand(1:5))  # y(0) = a_0
       println("y(0) = ", initial_conditions[end])
     elseif i == 1
       push!(initial_conditions, rand(1:5))  # y'(0) = a_1
@@ -210,5 +211,54 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
   end
 end
 
-export Settings, generate_random_ode_dataset, generate_specific_ode_dataset, solve_ode_series_closed_form
+# This function will be used for our experiment of taking scalar multiples of the coefficients of one ODE
+function generate_ode_dataset_from_array_of_alpha_matrices(s::Settings, batch_index::Int, α_matrices::Array{Matrix{Int64}})
+  ode_order = s.ode_order
+  poly_degree = s.poly_degree
+  # α_matrix = generate_random_alpha_matrix(s.ode_order, s.poly_degree) # generate ODE matrix
+  # generate exactly ode_order initial conditions
+  initial_conditions = Float64[]
+  for i in 0:(ode_order-1)
+    if i == 0
+      # push!(initial_conditions, rand(1:5))  # y(0) = a_0
+      push!(initial_conditions, 1)  # y(0) = a_0, #NOTE:We want to make it so that a_0 = 0 to ensure that all solution vectors are linearly dependent
+      println("y(0) = ", initial_conditions[end])
+    elseif i == 1
+      push!(initial_conditions, rand(1:5))  # y'(0) = a_1
+      println("y'(0) = ", initial_conditions[end])
+    end
+  end
+  try
+    for matrix in α_matrices
+      taylor_series, series_coeffs = solve_ode_series_closed_form(matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
+      println("truncated taylor series: ", taylor_series)
+      println("truncated series coefficients: ", series_coeffs)
+      # read existing data
+      existing_data = if isfile(s.data_dir)
+        JSON.parsefile(s.data_dir)
+      else
+        Dict()
+      end
+
+      # Determine which training run this is based on existing data
+      dataset_key = lpad(batch_index, 2, '0')
+      # Initialize dataset key if it does not exist
+      if !haskey(existing_data, dataset_key)
+        existing_data[dataset_key] = Dict()
+      end
+      # use alpha matrix as key, series coefficients as value within the dataset batch
+      #  α_matrix_key = join(["[" * join(row, ", ") * "]" for row in eachrow(α_matrix)], "; ")
+
+      existing_data[dataset_key][string(matrix)] = series_coeffs # this is the source of our problems 
+      isdir("data") || mkpath("data") # ensure a data folder exists
+      json_string = JSON.json(existing_data)
+      write(s.data_dir, json_string)
+    end
+  catch e
+    println("failed to solve this ode: ", e)
+    return nothing
+  end
+end
+
+export Settings, generate_random_ode_dataset, generate_specific_ode_dataset, solve_ode_series_closed_form, generate_ode_dataset_from_array_of_alpha_matrices
 end

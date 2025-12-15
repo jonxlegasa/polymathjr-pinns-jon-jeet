@@ -3,7 +3,7 @@ module TwoDGridSearchOnWeights
 using Plots
 using Statistics
 
-include("../scripts/PINN.jl")
+include("../modelcode/PINN.jl")
 using .PINN
 
 include("../utils/helper_funcs.jl")

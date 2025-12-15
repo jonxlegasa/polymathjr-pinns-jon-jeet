@@ -6,7 +6,7 @@ using JSON
 include("../utils/helper_funcs.jl")
 using .helper_funcs
 
-include("../scripts/PINN.jl")
+include("../modelcode/PINN.jl")
 using .PINN
 
 """
@@ -20,7 +20,7 @@ Parameters:
 - fixed_weights: NamedTuple with the fixed values for the other weights
 """
 
-function search(training_dataset, weight_name::Symbol, weight_range::Tuple{Int, Int},
+function search(training_dataset, weight_name::Symbol, weight_range::Tuple{Int,Int},
   num_iterations::Int;
   fixed_weights::NamedTuple,
   num_supervised=5, N=5, x_left=0.0f0, x_right=1.0f0,
@@ -97,17 +97,17 @@ function search(training_dataset, weight_name::Symbol, weight_range::Tuple{Int, 
     for (run_idx, inner_dict) in training_dataset
       ConvertSettings = StringToMatrixSettings(inner_dict)
       converted_dict = convert_plugboard_keys(ConvertSettings)
-      settings = PINNSettings(5, 1234, converted_dict, 500, 500, 
-                              num_supervised, N, 10, x_left, x_right, 
-                              supervised_weight, bc_weight, pde_weight, xs)
+      settings = PINNSettings(5, 1234, converted_dict, 500, 500,
+        num_supervised, N, 10, x_left, x_right,
+        supervised_weight, bc_weight, pde_weight, xs)
       # Train the network
       println("  Training network...")
       p_trained, coeff_net, st = train_pinn(settings)
 
       # Evaluate and save results to the iteration directory
       println("  Evaluating and saving results...")
-      evaluate_solution(settings, p_trained, coeff_net, st, 
-                                            training_dataset["01"], data_directories)
+      evaluate_solution(settings, p_trained, coeff_net, st,
+        training_dataset["01"], data_directories)
     end
 
     println("  Results saved to: $(iteration_dir)")
@@ -134,11 +134,11 @@ function search(training_dataset, weight_name::Symbol, weight_range::Tuple{Int, 
     write(f, "Results by weight value:\n")
     write(f, "-"^50 * "\n")
   end
-  
+
   println("\n" * "="^50)
   println("Binary search complete!")
   println("Summary saved to: $(summary_file)")
-  
+
 end
 
 export binary_search_weights

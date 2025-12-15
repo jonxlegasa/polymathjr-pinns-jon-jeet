@@ -16,7 +16,7 @@ using .helper_funcs
 include("../utils/two_d_grid_search_hyperparameters.jl")
 using .TwoDGridSearchOnWeights
 
-include("../scripts/PINN.jl")
+include("../modelcode/PINN.jl")
 using .PINN
 
 include("../utils/training_schemes.jl")
@@ -102,7 +102,6 @@ function init_batches(batch_sizes::Array{Int})
 
     #  linear combination of coefficients of the ODEs
     #=
-
     Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # create training data
     # create_training_run_dirs(batch_index, k) # Create the training dirs
 
@@ -120,28 +119,17 @@ function init_batches(batch_sizes::Array{Int})
 
     Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
     =#
+    # code for scalar multiples of the coefficients of one ODE
+    array_of_matrices = Matrix{Int64}[]
+    beginning_alpha_matrix = reshape([1, 1], 2, 1)  # 2x1 Matrix{Int64}
+    push!(array_of_matrices, beginning_alpha_matrix)
 
+    for n in 1:10
+      push!(array_of_matrices, beginning_alpha_matrix * n)
+    end
 
-    # code for scalar multiples of the coefficients of the ODE
-    #=
-
-    # create_training_run_dirs(batch_index, k) # Create the training dirs
-
-    training_dataset = JSON.parsefile(training_data_dir)
-
-    # add the ode matrices together
-    matrices_to_be_added = Matrix{Int}[
-      alpha_matrix_key
-      for (run_idx, inner_dict) in training_dataset
-      for (alpha_matrix_key, series_coeffs) in convert_plugboard_keys(inner_dict)
-    ]
-
-    linear_combination_of_matrices = reduce(+, matrices_to_be_added)
-    println("Linear combos: ", linear_combination_of_matrices)
-
-    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
-    =#
-
+    Plugboard.generate_ode_dataset_from_array_of_alpha_matrices(training_dataset_setting, 1, array_of_matrices)
+    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, beginning_alpha_matrix * 11)
   end
 end
 

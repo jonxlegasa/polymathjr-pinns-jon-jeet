@@ -1,6 +1,6 @@
 module training_schemes
 
-include("../scripts/PINN.jl")
+include("../modelcode/PINN.jl")
 using .PINN
 
 include("../utils/helper_funcs.jl")
