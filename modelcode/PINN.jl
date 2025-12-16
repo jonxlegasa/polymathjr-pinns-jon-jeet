@@ -123,7 +123,7 @@ function initialize_network(settings::PINNSettings)
   max_input_size = maximum(prod(size(alpha_matrix_key)) for (alpha_matrix_key, series_coeffs) in settings.ode_matrices) # AHHHHH! what a messs
 
   coeff_net = Lux.Chain(
-    Lux.Dense(max_input_size, settings.neuron_num, σ),      # First hidden layer or the input layer? for now this is the input layer
+    Lux.Dense(max_input_size, N, σ),      # First hidden layer or the input layer? for now this is the input layer
     Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Second hidden layer
     Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ? 
     Lux.Dense(settings.neuron_num, settings.n_terms_for_power_series + 1)              # N+1? # Output layer with N+1 coefficients

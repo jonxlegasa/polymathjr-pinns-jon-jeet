@@ -173,7 +173,7 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
   initial_conditions = Float64[]
   for i in 0:(ode_order-1)
     if i == 0
-      push!(initial_conditions, 1)  # y(0) = a_0, we will set thie init condition to be 1
+      push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
       # push!(initial_conditions, rand(1:5))  # y(0) = a_0
       println("y(0) = ", initial_conditions[end])
     elseif i == 1
@@ -183,8 +183,7 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
   end
   try
     # output taylor series and its coefficients
-    taylor_series, series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
-    println("truncated taylor series: ", taylor_series)
+    series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
     println("truncated series coefficients: ", series_coeffs)
     # read existing data
     existing_data = if isfile(s.data_dir)
@@ -230,8 +229,7 @@ function generate_ode_dataset_from_array_of_alpha_matrices(s::Settings, batch_in
   end
   try
     for matrix in α_matrices
-      taylor_series, series_coeffs = solve_ode_series_closed_form(matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
-      println("truncated taylor series: ", taylor_series)
+      series_coeffs = solve_ode_series_closed_form(matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
       println("truncated series coefficients: ", series_coeffs)
       # read existing data
       existing_data = if isfile(s.data_dir)

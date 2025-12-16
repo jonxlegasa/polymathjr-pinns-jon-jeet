@@ -86,12 +86,11 @@ function init_batches(batch_sizes::Array{Int})
       batch_sizes: Array of integers representing different batch sizes
   """
 
-  # We only generate one random benchmark dataset
-  benchmark_dataset_setting::Settings = Plugboard.Settings(1, 0, 1, benchmark_data_dir, 21)
+  benchmark_dataset_setting::Settings = Plugboard.Settings(1, 0, 1, benchmark_data_dir, 5)
 
   # generate training datasets and benchmarks 
   for (batch_index, k) in enumerate(batch_sizes)
-    training_dataset_setting::Settings = Plugboard.Settings(1, 0, k, training_data_dir, 21)
+    training_dataset_setting::Settings = Plugboard.Settings(1, 0, k, training_data_dir, 5)
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
     run_number_formatted = lpad(batch_index, 2, '0')
 
@@ -99,9 +98,9 @@ function init_batches(batch_sizes::Array{Int})
     println("Generating datasets for training and benchmarks $run_number_formatted")
     println("="^50)
     println("Number of examples: ", k)
+    #=
 
     #  linear combination of coefficients of the ODEs
-    #=
     Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # create training data
     # create_training_run_dirs(batch_index, k) # Create the training dirs
 
@@ -119,6 +118,7 @@ function init_batches(batch_sizes::Array{Int})
 
     Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
     =#
+
     # code for scalar multiples of the coefficients of one ODE
     array_of_matrices = Matrix{Int64}[]
     beginning_alpha_matrix = reshape([1, 1], 2, 1)  # 2x1 Matrix{Int64}
@@ -130,6 +130,9 @@ function init_batches(batch_sizes::Array{Int})
 
     Plugboard.generate_ode_dataset_from_array_of_alpha_matrices(training_dataset_setting, 1, array_of_matrices)
     Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, beginning_alpha_matrix * 11)
+
+    # test_matrix = [1; 1;;]
+    # Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, test_matrix)
   end
 end
 
@@ -242,6 +245,6 @@ function run_training_sequence(batch_sizes::Array{Int})
 end
 
 
-batch = [1]
+batch = [2]
 
 run_training_sequence(batch)
