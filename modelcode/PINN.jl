@@ -144,7 +144,7 @@ end
 # Step 6: Define the Loss Function
 # ---------------------------------------------------------------------------
 
-function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings::PINNSettings, data_dir)
+function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings::PINNSettings)
   # Run the network to get the current vector of power series coefficients
   a_vec = first(coeff_net(ode_matrix_flat, p_net, st))[:, 1]
 
@@ -192,7 +192,7 @@ end
 # Step 7: Global Loss Function
 # ---------------------------------------------------------------------------
 
-function global_loss(p_net, settings::PINNSettings, coeff_net, st, csv_file)
+function global_loss(p_net, settings::PINNSettings, coeff_net, st)
   total_loss = F(0.0)
   total_local_loss_bc = F(0.0)
   total_local_loss_pde = F(0.0)
@@ -207,7 +207,7 @@ function global_loss(p_net, settings::PINNSettings, coeff_net, st, csv_file)
     # alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert from string to matrix 
     matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
     boundary_condition = series_coeffs[1]  # copy this
-    local_loss, local_loss_bc, local_loss_pde, local_loss_supervised = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings, csv_file) # calculate the local loss
+    local_loss, local_loss_bc, local_loss_pde, local_loss_supervised = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings) # calculate the local loss
     # println(local_loss)
     total_loss += local_loss # add up the local loss to find the global loss
     total_local_loss_bc += local_loss_bc
@@ -220,17 +220,21 @@ function global_loss(p_net, settings::PINNSettings, coeff_net, st, csv_file)
   normalized_loss_pde = total_local_loss_pde / num_of_training_examples
   normalized_loss_supervised = total_local_loss_supervised / num_of_training_examples
 
-  Zygote.ignore() do
-    buffer_loss_values(  # ← Changed from create_csv_file_for_loss
-      total_loss=normalized_loss,
-      total_loss_bc=normalized_loss_bc,
-      total_loss_pde=normalized_loss_pde,
-      total_loss_supervised=normalized_loss_supervised
+  # Zygote.ignore() do
+  #   buffer_loss_values(  # ← Changed from create_csv_file_for_loss
+  #     total_loss=normalized_loss,
+  #     total_loss_bc=normalized_loss_bc,
+  #     total_loss_pde=normalized_loss_pde,
+  #     total_loss_supervised=normalized_loss_supervised
+  #   )
+  # end
+  losses = (
+        bc = total_local_loss_bc / num_of_training_examples,
+        pde = total_local_loss_pde / num_of_training_examples,
+        sup = total_local_loss_supervised / num_of_training_examples
     )
-  end
-
   # println(total_loss)
-  return normalized_loss
+  return normalized_loss, losses
 end
 
 # ---------------------------------------------------------------------------
@@ -241,17 +245,44 @@ end
 We train the PINN on the training dataset and return the network
 =#
 
-function train_pinn(settings::PINNSettings, csv_file)
+function train_pinn(settings::PINNSettings, csv_file::Any)
   # Initialize network
   coeff_net, p_init_ca, st = initialize_network(settings)
 
-  initialize_loss_buffer()
+
+  history = []
+  latest_metrics = Ref((0.0f0, 0.0f0, 0.0f0))
+  # initialize_loss_buffer()
   # global_loss_tuple = Tuple{Int64, Float64, Float64, Float64, Float64}[] # this will store the global loss per iteration milestone
   # Create wrapper function for optimization
 
   function loss_wrapper(p_net, _)
-    return global_loss(p_net, settings, coeff_net, st, csv_file)
+    loss, losses = global_loss(p_net, settings, coeff_net, st)
+    latest_metrics[] = (losses.bc, losses.pde, losses.sup)
+    # return global_loss(p_net, settings, coeff_net, st, csv_file)
+    return loss
   end
+
+  function custom_callback(state, l; progress_bar)
+    # Update the progress bar (maintaining your existing UI)
+    # ProgressBar.update!(progress_bar) 
+    progress_bar(state, l)
+    # Record the data ONLY once per iteration
+    bc, pde, sup = latest_metrics[]
+    push!(history, (
+        total = l,
+        bc = bc,
+        pde = pde,
+        supervised = sup
+    ))
+    
+    return false # Return true if you want to trigger early stopping
+  end
+
+
+
+
+
 
   # ---------------- Stage 1: ADAM ----------------
   println("Starting Adam training...")
@@ -261,11 +292,13 @@ function train_pinn(settings::PINNSettings, csv_file)
   # Define the optimization problem
   adtype = Optimization.AutoZygote()
   optfun = OptimizationFunction(loss_wrapper, adtype)
+
   prob = OptimizationProblem(optfun, p_init_ca)
 
   res = solve(prob,
     OptimizationOptimisers.Adam(F(1e-3));
-    callback=callback_one, # this is for the progress bar 
+    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_one),
+    # callback=callback_one, # this is for the progress bar 
     maxiters=settings.maxiters_adam)
 
   # ---------------- Stage 2: LBFGS ----------------
@@ -276,7 +309,8 @@ function train_pinn(settings::PINNSettings, csv_file)
   prob2 = remake(prob; u0=res.u)
   res = solve(prob2,
     OptimizationOptimJL.LBFGS();
-    callback=callback_two,
+    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_two),
+    # callback=callback_two,
     maxiters=settings.maxiters_lbfgs)
 
   # Extract final trained parameters
@@ -284,7 +318,16 @@ function train_pinn(settings::PINNSettings, csv_file)
 
   println("\nTraining complete.")
 
-  write_buffer_to_csv(csv_file) # write from buffer to csv
+  for entry in history
+    buffer_loss_values(
+        total_loss = entry.total,
+        total_loss_bc = entry.bc,
+        total_loss_pde = entry.pde,
+        total_loss_supervised = entry.supervised
+    )
+  end
+  write_buffer_to_csv(csv_file)
+  # write_buffer_to_csv(csv_file) # write from buffer to csv
 
   return p_trained, coeff_net, st
 end
@@ -310,7 +353,8 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
     # We will then use this for our contour maps
     matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
     boundary_condition = benchmark_series_coeffs[1]
-    benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings, data_directories[5])
+    # benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings, data_directories[5])
+    benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings)
     loss += benchmark_loss
 
     a_learned = first(coeff_net(matrix_flat, p_trained, st))[:, 1] # extract learned coefficients

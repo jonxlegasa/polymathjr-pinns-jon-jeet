@@ -125,7 +125,7 @@ function init_batches(batch_sizes::Array{Int})
     push!(array_of_matrices, beginning_alpha_matrix)
 
     for n in 1:10
-      push!(array_of_matrices, beginning_alpha_matrix * n)
+      push!(array_of_matrices, beginning_alpha_matrix * (n))
     end
 
     Plugboard.generate_ode_dataset_from_array_of_alpha_matrices(training_dataset_setting, 1, array_of_matrices)
@@ -216,7 +216,13 @@ function run_training_sequence(batch_sizes::Array{Int})
       joinpath(iteration_dir, "iteration_output.csv"),
     ]
     converted_dict = convert_plugboard_keys(inner_dict)
-    settings = PINNSettings(21, 1234, converted_dict, 5000, 5000, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+
+    float_converted_dict = Dict{Matrix{Float32}, Any}()
+    for (mat, series) in converted_dict
+      float_converted_dict[Float32.(mat)] = series
+    end
+
+    settings = PINNSettings(21, 1234, float_converted_dict, 500, 500, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
 
     # Train the network
     p_trained, coeff_net, st = train_pinn(settings, data_directories[6]) # this is where we call the training process
