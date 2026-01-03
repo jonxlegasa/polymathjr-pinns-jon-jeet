@@ -258,14 +258,7 @@ function run_training_sequence(batch_sizes::Array{Int})
   scaling_neurons_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
   neurons_counts = Dict(
     "ten_neurons" => 10,
-    "twenty_neurons" => 20,
-    "thirty_neurons" => 30,
-    "forty_neurons" => 40,
     "fifty_neurons" => 50,
-    "sixty_neurons" => 60,
-    "seventy_neurons" => 70,
-    "eighty_neurons" => 80,
-    "ninety_neurons" => 90,
     "hundred_neurons" => 100
   )
 

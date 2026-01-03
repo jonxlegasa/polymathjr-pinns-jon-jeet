@@ -58,7 +58,7 @@ struct PINNSettings
   seed::Int
   ode_matrices::Dict{Any,Any} # from the specific training run that is specified by the run number
   maxiters_adam::Int
-  maxiters_lbfgs::Int
+  # maxiters_lbfgs::Int # no LBFGS
   n_terms_for_power_series::Int # The degree of the highest power term in the series.
   num_supervised::Int # The number of coefficients we will supervise during training.
   num_points::Int # number of points evaluated
@@ -295,7 +295,7 @@ function train_pinn(settings::PINNSettings, csv_file::Any)
     callback = (state, l) -> custom_callback(state, l; progress_bar=callback_one),
     # callback=callback_one, # this is for the progress bar 
     maxiters=settings.maxiters_adam)
-
+  #=
   # ---------------- Stage 2: LBFGS ----------------
   println("Starting LBFGS fine-tuning...")
   p_two = ProgressBar.ProgressBarSettings(settings.maxiters_lbfgs, "LBFGS fine-tune...")
@@ -307,6 +307,7 @@ function train_pinn(settings::PINNSettings, csv_file::Any)
     callback = (state, l) -> custom_callback(state, l; progress_bar=callback_two),
     # callback=callback_two,
     maxiters=settings.maxiters_lbfgs)
+  =#
 
   # Extract final trained parameters
   p_trained = res.u

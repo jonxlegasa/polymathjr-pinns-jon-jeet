@@ -30,7 +30,7 @@ function scaling_neurons(settings::TrainingSchemesSettings, neurons_counts::Dict
     for (run_idx, inner_dict) in settings.training_dataset
       converted_dict = convert_plugboard_keys(inner_dict)
 
-      pinn_settings = PINNSettings(neuron_count, 1234, converted_dict, 1000, 1, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs)
+      pinn_settings = PINNSettings(neuron_count, 1234, converted_dict, 500, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs)
       # Convert the alpha matrix keys from strings to matrices
       # Because zygote is being mean
       base_data_dir = "data"
