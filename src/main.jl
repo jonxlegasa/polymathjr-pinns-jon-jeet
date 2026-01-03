@@ -186,9 +186,9 @@ function run_training_sequence(batch_sizes::Array{Int})
   )
   =#
 
-  N = 21 # The degree of the highest power term in the series.
+  N = 10 # The degree of the highest power term in the series.
 
-  num_supervised = 21 # The number of coefficients we will supervise during training.
+  num_supervised = 10 # The number of coefficients we will supervise during training.
   # Create a set of points inside the domain to enforce the ODE. These are called "collocation points".
   num_points = 10
 
@@ -197,17 +197,11 @@ function run_training_sequence(batch_sizes::Array{Int})
   x_right = F(1.0) # Right boundary of the domain
 
   # Define a weight for the boundary condition, surpivesed coefficients, and the pde
-  supervised_weight = F(0.7)  # Weight for the supervised loss term in the total loss function.
+  supervised_weight = F(1.0)  # Weight for the supervised loss term in the total loss function.
   bc_weight = F(1.0)# for now we are going to test the two of these to zero
-  pde_weight = F(0.4)
+  pde_weight = F(1.0)
 
   xs = range(x_left, x_right, length=num_points)
-
-  # neurons_counts = Dict("twenty_neurons" => 20, "forty_neurons" => 40, "eighty_neurons" => 80)
-  # scaling_neurons_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
-
-  # this increase the neuron count in an iterative process
-  # scaling_neurons(scaling_neurons_settings, neurons_counts)
 
   # This code is for the classic training scheme for no change in neuron count or whatever
   #=
@@ -274,8 +268,13 @@ function run_training_sequence(batch_sizes::Array{Int})
     "ninety_neurons" => 90,
     "hundred_neurons" => 100
   )
-  grid_search_at_scale(scaling_neurons_settings, neurons_counts)
+
+  # grid_search_at_scale(scaling_neurons_settings, neurons_counts)
   # println(result)
+
+  # this increase the neuron count in an iterative process
+  scaling_neurons(scaling_neurons_settings, neurons_counts)
+
 end
 
 batch = [1000]
