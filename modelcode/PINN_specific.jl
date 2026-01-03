@@ -263,7 +263,6 @@ a_learned = first(coeff_net([F(0.0)], p_trained, st))[:, 1]
 # TODO: for loop the PINN function against the vectors in TRAINING set
 # PINN would have to be a function
 
-
 # ---------------------------------------------------------------------------
 # Step 6: Analyze and Plot the Results
 # ---------------------------------------------------------------------------
