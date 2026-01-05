@@ -2,6 +2,7 @@ module helper_funcs
 
 using CSV
 using DataFrames
+using Plots
 
 function convert_plugboard_keys(inner_dict)
   converted_dict = Dict{Matrix{Int},Any}()
@@ -96,6 +97,30 @@ function get_buffer_size()
   return length(loss_buffer[])
 end
 
+function show_benchmark_loss(
+  array_of_benchmark_loss,
+  filename,
+  title,
+  color,
+  bar_width
+)
+
+  # Create bar graph from array
+  bar(
+    1:length(array_of_benchmark_loss),
+    array_of_benchmark_loss,
+    xlabel = "Training Run",
+    ylabel = "Function Error",
+    title = title,
+    legend = false,
+    grid = true,
+    bar_width = bar_width,
+    color = color
+  )
+
+  # Save the plot
+  savefig(filename)
+end
 
 # this will be a reference for our new analytic_sol_fun
 # analytic_sol_func(x) = (pi * x * (-x + (pi^2) * (2x - 3) + 1) - sin(pi * x)) / (pi^3) # We replace with our training examples

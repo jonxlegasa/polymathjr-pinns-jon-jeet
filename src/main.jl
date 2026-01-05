@@ -105,7 +105,6 @@ function init_batches(batch_sizes::Array{Int})
     # create_training_run_dirs(batch_index, k) # Create the training dirs
 
     training_dataset = JSON.parsefile(training_data_dir)
-
     # add the ode matrices together
     matrices_to_be_added = Matrix{Int}[
       alpha_matrix_key
@@ -143,8 +142,8 @@ function init_batches(batch_sizes::Array{Int})
     Plugboard.generate_random_ode_dataset(benchmark_dataset_setting, batch_index)
     =#
 
-    # Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index)
-    # Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, test_matrix)
+    Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index)
+    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, test_matrix)
   end
 end
 
@@ -202,7 +201,7 @@ function run_training_sequence(batch_sizes::Array{Int})
   pde_weight = F(1.0)
 
   xs = range(x_left, x_right, length=num_points)
-
+#=
   # This code is for the classic training scheme for no change in neuron count or whatever
   for (run_idx, inner_dict) in training_dataset
     # Convert the alpha matrix keys from strings to matrices
@@ -227,13 +226,15 @@ function run_training_sequence(batch_sizes::Array{Int})
       float_converted_dict[Float32.(mat)] = series
     end
 
-    settings = PINNSettings(100, 1234, float_converted_dict, 500, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+    settings = PINNSettings(100, 1234, float_converted_dict, 5, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
 
     # Train the network
     p_trained, coeff_net, st = train_pinn(settings, data_directories[6]) # this is where we call the training process
     function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], data_directories)
     println(function_error)
   end
+
+  =#
 
 
 
@@ -270,13 +271,13 @@ function run_training_sequence(batch_sizes::Array{Int})
 
   scaling_iterations_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
   iteration_counts = Dict(
-  "thousand_iterations" => 1000,
-  "ten_thousand_iterations" => 10000,
-)
+    "lbfgs_1000" => 1000,
+    "lbfgs_10000" => 10000,
+    "lbfgs_100000" => 100000,
+  )
 
   scaling_adam_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
   scaling_adam(scaling_adam_settings, iteration_counts)
-
 end
 
 batch = [10]
