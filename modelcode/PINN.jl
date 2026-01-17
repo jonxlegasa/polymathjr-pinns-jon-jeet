@@ -57,8 +57,8 @@ struct PINNSettings
   neuron_num::Int
   seed::Int
   ode_matrices::Dict{Any,Any} # from the specific training run that is specified by the run number
-  maxiters_adam::Int
-  # maxiters_lbfgs::Int # no LBFGS
+  # maxiters_adam::Int
+  maxiters_lbfgs::Int # no LBFGS
   n_terms_for_power_series::Int # The degree of the highest power term in the series.
   num_supervised::Int # The number of coefficients we will supervise during training.
   num_points::Int # number of points evaluated
@@ -124,12 +124,8 @@ function initialize_network(settings::PINNSettings)
 
   coeff_net = Lux.Chain(
     Lux.Dense(max_input_size, settings.neuron_num, σ),      # First hidden layer or the input layer? for now this is the input layer
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # Third hidden layer ?
+    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # 2nd layer
+    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # 3rd layer
     Lux.Dense(settings.neuron_num, settings.n_terms_for_power_series + 1)              # N+1? # Output layer with N+1 coefficients
   )
 
@@ -283,35 +279,43 @@ function train_pinn(settings::PINNSettings, csv_file::Any)
     return false # Return true if you want to trigger early stopping
   end
 
-  # ---------------- Stage 1: ADAM ----------------
-  println("Starting Adam training...")
-  p_one = ProgressBar.ProgressBarSettings(settings.maxiters_adam, "Adam Training...") # the progress bar has not been called...
-  callback_one = ProgressBar.Bar(p_one)
 
-  # Define the optimization problem
   adtype = Optimization.AutoZygote()
   optfun = OptimizationFunction(loss_wrapper, adtype)
 
-  prob = OptimizationProblem(optfun, p_init_ca)
 
+  # ---------------- Stage 1: ADAM ----------------
+  
+  #=
+  println("Starting Adam training...")
+  p_one = ProgressBar.ProgressBarSettings(settings.maxiters_adam, "Adam Training...") # the progress bar has not been called...
+  callback_one = ProgressBar.Bar(p_one)
+=#
+  # Define the optimization problem
+
+  prob = OptimizationProblem(optfun, p_init_ca)
+  #=
   res = solve(prob,
     OptimizationOptimisers.Adam(F(1e-3));
     callback = (state, l) -> custom_callback(state, l; progress_bar=callback_one),
     # callback=callback_one, # this is for the progress bar 
     maxiters=settings.maxiters_adam)
-  #=
+
+  =#
+
   # ---------------- Stage 2: LBFGS ----------------
+
   println("Starting LBFGS fine-tuning...")
   p_two = ProgressBar.ProgressBarSettings(settings.maxiters_lbfgs, "LBFGS fine-tune...")
   callback_two = ProgressBar.Bar(p_two)
 
-  prob2 = remake(prob; u0=res.u)
-  res = solve(prob2,
+  # prob2 = remake(prob; u0=res.u) # prob hm.....
+
+  res = solve(prob,
     OptimizationOptimJL.LBFGS();
     callback = (state, l) -> custom_callback(state, l; progress_bar=callback_two),
     # callback=callback_two,
     maxiters=settings.maxiters_lbfgs)
-  =#
 
   # Extract final trained parameters
   p_trained = res.u
@@ -501,7 +505,7 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       title="Global Loss per Global Loss Call",
       xlabel="Loss Call",
       ylabel="Global Loss",
-      # yscale=:log10
+      yscale=:log10
     )
 
     total_bc_loss_plot = plot(
@@ -535,7 +539,6 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       total_supervised_loss_plot,
       layout=(4, 1),
       size=(1000, 1000),
-      yscale=:log10
     )
 
     # Save plots

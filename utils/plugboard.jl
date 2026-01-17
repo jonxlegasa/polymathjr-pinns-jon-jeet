@@ -151,10 +151,12 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
     initial_conditions = Float64[]
     for i in 0:(ode_order-1)
       if i == 0
-        push!(initial_conditions, rand(1:5))  # y(0) = a_0
+        push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
+        # push!(initial_conditions, rand(1:5))  # y(0) = a_0
         println("y(0) = ", initial_conditions[end])
       elseif i == 1
-        push!(initial_conditions, rand(1:5))  # y'(0) = a_1
+        push!(initial_conditions, 2.0)  # y'(0) = a_1, we will set thie init condition to be 1
+        # push!(initial_conditions, rand(1:5))  # y'(0) = a_1
         println("y'(0) = ", initial_conditions[end])
       end
     end
@@ -202,11 +204,12 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
   initial_conditions = Float64[]
   for i in 0:(ode_order-1)
     if i == 0
-      # push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
-      push!(initial_conditions, rand(1:5))  # y(0) = a_0
+      push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
+      # push!(initial_conditions, rand(1:5))  # y(0) = a_0
       println("y(0) = ", initial_conditions[end])
     elseif i == 1
-      push!(initial_conditions, rand(1:5))  # y'(0) = a_1
+      push!(initial_conditions, 2.0)  # y(0) = a_0, we will set thie init condition to be 1
+      # push!(initial_conditions, rand(1:5))  # y'(0) = a_1
       println("y'(0) = ", initial_conditions[end])
     end
   end
