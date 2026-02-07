@@ -2,18 +2,19 @@
 
 Loss history tracking during training.
 
-**Location:** `data/training-run-N/batch-XX/iteration_output.csv`
+**Location:** `<output_dir>/loss.csv`
 
 ---
 
 ## Structure
 
 ```csv
-loss_type,iter_1,iter_2,iter_3,...,iter_N
-total_loss,0.9500,0.8200,0.7100,...,0.0012
-total_loss_bc,0.3000,0.2500,0.1800,...,0.0001
-total_loss_pde,0.5000,0.4200,0.3500,...,0.0008
-total_loss_supervised,0.1500,0.1500,0.1800,...,0.0003
+iteration,total,bc,pde,supervised
+1,0.9500,0.3000,0.5000,0.1500
+2,0.8200,0.2500,0.4200,0.1500
+3,0.7100,0.1800,0.3500,0.1800
+...
+100000,0.0012,0.0001,0.0008,0.0003
 ```
 
 ---
@@ -22,19 +23,11 @@ total_loss_supervised,0.1500,0.1500,0.1800,...,0.0003
 
 | Column | Description |
 |--------|-------------|
-| `loss_type` | Name of loss component |
-| `iter_N` | Value at iteration N |
-
----
-
-## Rows
-
-| Row | Description |
-|-----|-------------|
-| `total_loss` | Weighted sum of all losses |
-| `total_loss_bc` | Boundary condition loss |
-| `total_loss_pde` | ODE residual loss |
-| `total_loss_supervised` | Supervised coefficient MSE |
+| `iteration` | Training iteration number (1-based) |
+| `total` | Weighted sum of all losses |
+| `bc` | Boundary condition loss |
+| `pde` | ODE residual loss |
+| `supervised` | Supervised coefficient MSE |
 
 ---
 
@@ -43,10 +36,10 @@ total_loss_supervised,0.1500,0.1500,0.1800,...,0.0003
 ```julia
 using CSV, DataFrames
 
-df = CSV.read("iteration_output.csv", DataFrame)
+df = CSV.read("loss.csv", DataFrame)
 
 # Get total loss values
-total_loss = Vector(df[df.loss_type .== "total_loss", 2:end][1, :])
+total_loss = df.total
 ```
 
 ---
@@ -56,11 +49,10 @@ total_loss = Vector(df[df.loss_type .== "total_loss", 2:end][1, :])
 ```python
 import pandas as pd
 
-df = pd.read_csv("iteration_output.csv")
-df = df.set_index('loss_type')
+df = pd.read_csv("loss.csv")
 
 # Get total loss values
-total_loss = df.loc['total_loss'].values
+total_loss = df["total"].values
 ```
 
 ---
@@ -70,8 +62,7 @@ total_loss = df.loc['total_loss'].values
 ```python
 import matplotlib.pyplot as plt
 
-iterations = range(1, len(total_loss) + 1)
-plt.semilogy(iterations, total_loss)
+plt.semilogy(df["iteration"], df["total"])
 plt.xlabel('Iteration')
 plt.ylabel('Total Loss')
 plt.title('Training Loss')

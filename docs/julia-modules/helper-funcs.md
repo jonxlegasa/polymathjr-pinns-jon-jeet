@@ -1,34 +1,8 @@
 # helper_funcs.jl
 
-Utility functions for data conversion and loss logging.
+Utility functions for data conversion and results output.
 
 **Location:** `utils/helper_funcs.jl`
-
----
-
-## Loss Buffer
-
-In-memory buffer for accumulating loss values during training.
-
-### `initialize_loss_buffer()`
-
-Initializes/resets the loss buffer.
-
-### `buffer_loss_values(; kwargs...)`
-
-Adds loss values to buffer.
-
-```julia
-buffer_loss_values(total=0.5, pde=0.3, bc=0.1, supervised=0.1)
-```
-
-### `write_buffer_to_csv(csv_file)`
-
-Writes buffered losses to CSV file.
-
-### `get_buffer_size()`
-
-Returns number of buffered entries.
 
 ---
 

@@ -1,7 +1,33 @@
+# Data assets
 data/*.png
 data/*.jpg
 data/*.jpeg
 data/*.gif
+
+# Secrets
+.env
+.env.*
+
+# Julia
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/build.log
+
+# IDE / Editor
 .vscode/
+.idea/
+
+# Claude Code
 .claude/
-# Ignore all files in the data directory except for .txt files
+
+# OpenCode
+.opencode/
+
+# Beads
+.beads/
+
+# OS
+.DS_Store
+Thumbs.db

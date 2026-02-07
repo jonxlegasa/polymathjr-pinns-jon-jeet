@@ -72,12 +72,12 @@ global_loss(...) → (mean_loss, state, aggregated_components)
 
 ---
 
-### `train_pinn(settings, csv_file)`
+### `train_pinn(settings, output_dir; milestone_interval=0, on_milestone=nothing)`
 
-Auto-detects GPU and trains with Adam. LBFGS is available but currently disabled pending convergence investigation. Returns CPU parameters regardless of training device.
+Auto-detects GPU and trains with Adam. LBFGS is available but currently disabled pending convergence investigation. Returns CPU parameters regardless of training device. Writes `loss.csv` to `output_dir` after training.
 
 ```julia
-train_pinn(settings::PINNSettings, csv_file) → (trained_params, network, state)
+train_pinn(settings::PINNSettings, output_dir; milestone_interval=0, on_milestone=nothing) → (trained_params, network, state, run_id)
 ```
 
 **Behavior:**
@@ -85,7 +85,9 @@ train_pinn(settings::PINNSettings, csv_file) → (trained_params, network, state
 - Transfers network parameters to GPU if available
 - Runs Adam optimization for `maxiters_lbfgs` iterations
 - LBFGS code is present but commented out (needs further work on convergence)
+- Writes loss history to `<output_dir>/loss.csv` (rows=iterations, columns: `iteration`, `total`, `bc`, `pde`, `supervised`)
 - Transfers trained parameters back to CPU before returning
+- Optionally calls `on_milestone(params, iteration, net, state, run_id)` every `milestone_interval` iterations
 
 ---
 

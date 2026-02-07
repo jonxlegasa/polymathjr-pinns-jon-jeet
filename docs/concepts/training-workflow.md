@@ -131,14 +131,15 @@ data/training-run-N/batch-01/
 
 ## Loss During Training
 
-Each iteration logs:
+Each iteration logs to `loss.csv` with the following columns:
 
-| Component | Description |
-|-----------|-------------|
-| `total_loss` | Weighted sum of all losses |
-| `total_loss_pde` | ODE residual loss |
-| `total_loss_bc` | Boundary condition loss |
-| `total_loss_supervised` | Coefficient MSE |
+| Column | Description |
+|--------|-------------|
+| `iteration` | Training iteration number |
+| `total` | Weighted sum of all losses |
+| `pde` | ODE residual loss |
+| `bc` | Boundary condition loss |
+| `supervised` | Coefficient MSE |
 
 ---
 
