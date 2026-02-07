@@ -37,7 +37,7 @@ function create_training_run_dirs(run_number::Int64, batch_size::Any)
   data_dir = "data"
   if !isdir(data_dir)
     mkdir(data_dir)
-    println("Created data directory: $data_dir")
+    @info "Created data directory: $data_dir"
   end
 
   # Format run number with zero padding (01, 02, 03, etc.)
@@ -46,7 +46,7 @@ function create_training_run_dirs(run_number::Int64, batch_size::Any)
   training_run_dir = joinpath(data_dir, "training-run-$run_number_formatted")
   if !isdir(training_run_dir)
     mkdir(training_run_dir)
-    println("Created training run directory: $training_run_dir")
+    @info "Created training run directory: $training_run_dir"
   end
 
   # Generate output file with training run information
@@ -64,11 +64,14 @@ function create_training_run_dirs(run_number::Int64, batch_size::Any)
     println(file, "="^30)
   end
 
-  println("Training run $run_number_formatted setup complete!")
-  println("Output file created: $output_file")
+  @info "Training run $run_number_formatted setup complete" output_file
 
   return training_run_dir, output_file
 end
+
+# ---- Configuration ----
+GENERATE_DATASET = true  # Set to false to skip dataset generation and use existing data
+MODE = "SPECIFIC"         # "SPECIFIC" = benchmark on hardcoded test_matrix, "RANDOM" = random benchmark
 
 # These are the training and benchmark directories
 training_data_dir = "./data/training_dataset.json"
@@ -94,56 +97,19 @@ function init_batches(batch_sizes::Array{Int})
     # set up plugboard for solutions to ay' + by = 0 where a,b != 0
     run_number_formatted = lpad(batch_index, 2, '0')
 
-    println("\n" * "="^50)
-    println("Generating datasets for training and benchmarks $run_number_formatted")
-    println("="^50)
-    println("Number of examples: ", k)
+    @info "Generating datasets for batch $run_number_formatted" num_examples=k mode=MODE
 
-    #=
-    #  linear combination of coefficients of the ODEs
-    Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index) # create training data
-    # create_training_run_dirs(batch_index, k) # Create the training dirs
-
-    training_dataset = JSON.parsefile(training_data_dir)
-    # add the ode matrices together
-    matrices_to_be_added = Matrix{Int}[
-      alpha_matrix_key
-      for (run_idx, inner_dict) in training_dataset
-      for (alpha_matrix_key, series_coeffs) in convert_plugboard_keys(inner_dict)
-    ]
-
-    linear_combination_of_matrices = reduce(+, matrices_to_be_added)
-    println("Linear combos: ", linear_combination_of_matrices)
-
-    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, linear_combination_of_matrices)
-    =#
-
-    # code for scalar multiples of the coefficients of one ODE
-    #= 
-    array_of_matrices = Matrix{Int64}[]
-    beginning_alpha_matrix = reshape([3, 4], 2, 1)  # 2x1 Matrix{Int64}
-    push!(array_of_matrices, beginning_alpha_matrix)
-
-    for n in 1:10
-      push!(array_of_matrices, beginning_alpha_matrix * (n))
+    # Training data depends on MODE
+    specific_matrix = [1; 6; 2;;]
+    if MODE == "SPECIFIC"
+      @warn "In $MODE mode. Generating specific training dataset for $specific_matrix"
+      Plugboard.generate_specific_ode_dataset(training_dataset_setting, batch_index, specific_matrix)
+    elseif MODE == "RANDOM"
+      Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index)
     end
-    =#
 
-    # test_matrix = [1; 1;;]
-    # Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, test_matrix)
-
-    # n = 10 # this will the number of matrices we create
-    # array_of_matrices = create_matrix_array(n)
-
-    # test_matrix = [1; 6; 2;;]
-    test_matrix = [1; 6; 2;;]
-    #=
-    Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index)
-    Plugboard.generate_random_ode_dataset(benchmark_dataset_setting, batch_index)
-    =#
-
-    # Plugboard.generate_random_ode_dataset(training_dataset_setting, batch_index)
-    # Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, test_matrix)
+    # Benchmark always uses the specific test matrix for consistent evaluation
+    Plugboard.generate_specific_ode_dataset(benchmark_dataset_setting, 1, specific_matrix)
   end
 end
 
@@ -158,8 +124,10 @@ function run_training_sequence(batch_sizes::Array{Int})
   Args:
       batch_sizes: Array of integers representing different batch sizes
   """
-  # Initialize all batches first
-  init_batches(batch_sizes)
+  # Initialize all batches first (generate datasets via plugboard)
+  if GENERATE_DATASET
+    init_batches(batch_sizes)
+  end
 
   # we only load the training data dir here
   training_dataset = JSON.parsefile(training_data_dir)
@@ -201,24 +169,14 @@ function run_training_sequence(batch_sizes::Array{Int})
   pde_weight = F(1.0)
 
   xs = range(x_left, x_right, length=num_points)
-#=
-  # This code is for the classic training scheme for no change in neuron count or whatever
+
+  # Output directory for results
+  output_dir = "results"
+  mkpath(output_dir)
+
+  #=
+  # Single run with one dataset and fixed iteration count
   for (run_idx, inner_dict) in training_dataset
-    # Convert the alpha matrix keys from strings to matrices
-    # Because zygote is being mean
-    base_data_dir = "data"
-    iteration_dir = joinpath(base_data_dir, "test")
-    mkpath(iteration_dir)
-
-    data_directories = [
-      joinpath(iteration_dir, "function_comparison.png"),
-      joinpath(iteration_dir, "coefficient_comparison.png"),
-      joinpath(iteration_dir, "adam_iteration_and_loss_comparison.png"),
-      joinpath(iteration_dir, "lbfgs_iteration_and_loss_comparison.png"),
-      joinpath(iteration_dir, "iteration_plot.png"),
-
-      joinpath(iteration_dir, "iteration_output.csv"),
-    ]
     converted_dict = convert_plugboard_keys(inner_dict)
 
     float_converted_dict = Dict{Matrix{Float32}, Any}()
@@ -226,18 +184,17 @@ function run_training_sequence(batch_sizes::Array{Int})
       float_converted_dict[Float32.(mat)] = series
     end
 
-    settings = PINNSettings(100, 1234, float_converted_dict, 5, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+    settings = PINNSettings(10, 1234, float_converted_dict, 100, num_supervised, N, 10, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs, "adam")
 
     # Train the network
-    p_trained, coeff_net, st = train_pinn(settings, data_directories[6]) # this is where we call the training process
-    function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], data_directories)
-    println(function_error)
+    p_trained, coeff_net, st, run_id = train_pinn(settings, output_dir)
+    function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], output_dir, run_id)
+    @info "Function error: $function_error"
   end
-
   =#
 
-
-
+  #=
+  # Scaling runs (disabled)
   #=
     result = grid_search_2d(
       training_dataset,
@@ -253,7 +210,7 @@ function run_training_sequence(batch_sizes::Array{Int})
       xs=xs
     )
   =#
-  
+
   #=
   scaling_neurons_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
   neurons_counts = Dict(
@@ -268,16 +225,13 @@ function run_training_sequence(batch_sizes::Array{Int})
   # this increase the neuron count in an iterative process
   scaling_neurons(scaling_neurons_settings, neurons_counts)
   =#
+  =#
 
-  scaling_iterations_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
-  iteration_counts = Dict(
-    "lbfgs_1000" => 1000,
-    "lbfgs_10000" => 10000,
-    "lbfgs_100000" => 100000,
-  )
+  maxiters = 100000
+  milestone_interval = 100
 
   scaling_adam_settings = TrainingSchemesSettings(training_dataset, benchmark_dataset, N, num_supervised, num_points, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
-  scaling_adam(scaling_adam_settings, iteration_counts)
+  scaling_adam(scaling_adam_settings, maxiters, milestone_interval)
 end
 
 batch = [10]

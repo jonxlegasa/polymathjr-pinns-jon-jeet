@@ -32,6 +32,12 @@ import Random
 using TaylorSeries
 using CSV
 using DataFrames
+using JSON
+
+using CUDA
+
+include("../utils/gpu_utils.jl")
+using .GPUUtils
 
 include("../utils/ProgressBar.jl")
 using .ProgressBar
@@ -68,6 +74,7 @@ struct PINNSettings
   bc_weight::Float32 # for now we are going to test the two of these to zero
   pde_weight::Float32
   xs::Any
+  optimizer::String
 end
 
 # We need to have a parameter for the PINN to allow us to swap architectures easily
@@ -116,26 +123,35 @@ x_right = F(1.0) # Right boundary of the domain
 # Step 5: Initialize Neural Network with Settings
 # ---------------------------------------------------------------------------
 
-function initialize_network(settings::PINNSettings)
+function initialize_network(settings::PINNSettings; use_gpu::Bool=false)
   # Find the maximum matrix dimensions for input layer size
-  # alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert to string
-
-  max_input_size = maximum(prod(size(alpha_matrix_key)) for (alpha_matrix_key, series_coeffs) in settings.ode_matrices) # AHHHHH! what a messs
+  max_input_size = if !isempty(settings.ode_matrices)
+    maximum(prod(size(key)) for (key, _) in settings.ode_matrices)
+  else
+    settings.n_terms_for_power_series + 1
+  end
 
   coeff_net = Lux.Chain(
-    Lux.Dense(max_input_size, settings.neuron_num, σ),      # First hidden layer or the input layer? for now this is the input layer
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # 2nd layer
-    Lux.Dense(settings.neuron_num, settings.neuron_num, σ), # 3rd layer
-    Lux.Dense(settings.neuron_num, settings.n_terms_for_power_series + 1)              # N+1? # Output layer with N+1 coefficients
+    Lux.Dense(max_input_size, settings.neuron_num, σ),
+    Lux.Dense(settings.neuron_num, settings.neuron_num, σ),
+    Lux.Dense(settings.neuron_num, settings.neuron_num, σ),
+    Lux.Dense(settings.neuron_num, settings.n_terms_for_power_series + 1)
   )
 
   # Initialize the network's parameters with the specified seed
   rng = Random.default_rng()
   Random.seed!(rng, settings.seed)
-  p_init, st = Lux.setup(rng, coeff_net) # this sets the parameters of the Neural Network
+
+  p_init, st = Lux.setup(rng, coeff_net)
 
   # Wrap the initial parameters in a ComponentArray
   p_init_ca = ComponentArray(p_init)
+
+  # Transfer parameters to GPU if available
+  if use_gpu
+    p_init_ca = CUDA.cu(p_init_ca)
+    @info "Network parameters transferred to GPU"
+  end
 
   return coeff_net, p_init_ca, st
 end
@@ -144,47 +160,40 @@ end
 # Step 6: Define the Loss Function
 # ---------------------------------------------------------------------------
 
-function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings::PINNSettings)
-  # Run the network to get the current vector of power series coefficients
-  a_vec = first(coeff_net(ode_matrix_flat, p_net, st))[:, 1]
+function loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings::PINNSettings, use_gpu::Bool=false)
+  # Transfer constants to correct device — off the gradient tape since these don't depend on p_net
+  ode_flat_dev, bc_dev, data_dev, xs_dev = Zygote.ignore() do
+    (GPUUtils.to_device(ode_matrix_flat; gpu=use_gpu),
+     GPUUtils.to_device(boundary_condition; gpu=use_gpu),
+     GPUUtils.to_device(data; gpu=use_gpu),
+     GPUUtils.to_device(collect(settings.xs); gpu=use_gpu))
+  end
 
-  # Define the approximate solution and its derivatives using the coefficients
-  # u_approx(x) = sum(a_vec[i] * x^(i - 1) for i in 1:N+1)
-  # Du_approx(x) = sum(a_vec[i] * x^(i - 2) for i in 2:N+1) # First derivative
-
-  # For the ODE: a*y' + b*y = 0
-  # This can be written as: b*y + a*y' = 0
-  # So ode_matrix_flat should be [b, a]
+  # Run the network to get coefficients (output is on same device as p_net)
+  a_vec = vec(first(coeff_net(ode_flat_dev, p_net, st)))
 
   loss_func_settings = LossFunctionSettings(
     a_vec,
     settings.n_terms_for_power_series,
-    ode_matrix_flat,
+    ode_flat_dev,
     settings.x_left,
-    boundary_condition,
-    settings.xs,
+    bc_dev,
+    xs_dev,
     settings.num_points,
     settings.num_supervised,
-    data,
+    data_dev,
   )
 
-  # Define u_approx (the 0th derivative, which is y) with coefficient b
-  # u_approx(x) = sum(a_vec[i] * x^(i - 1) for i in 1:settings.n_terms_for_power_series+1)
-
   # Calculate the PDE loss (residual of the ODE)
-  # loss_pde = sum(abs2, ode_residual(xi, ode_matrix_flat, a_vec, settings.n_terms_for_power_series) for xi in settings.xs) / settings.num_points 
   loss_pde = generate_loss_pde_value(loss_func_settings)
 
   # Calculate the loss from the boundary conditions
-  # loss_bc = abs2(u_approx(settings.x_left) - F(boundary_condition))
   loss_bc = generate_loss_bc_value(loss_func_settings)
 
   # Calculate supervised loss using the plugboard coefficients
-  # loss_supervised = sum(abs2, a_vec[1:settings.num_supervised] - data) / settings.num_supervised
   loss_supervised = generate_loss_supervised_value(loss_func_settings)
 
   # The total loss is a weighted sum of the components
-  # We want to return the global loss but we want to return the individual loss as well
   return loss_pde * settings.pde_weight + settings.bc_weight * loss_bc + settings.supervised_weight * loss_supervised, loss_bc, loss_pde, loss_supervised
 end
 
@@ -192,7 +201,7 @@ end
 # Step 7: Global Loss Function
 # ---------------------------------------------------------------------------
 
-function global_loss(p_net, settings::PINNSettings, coeff_net, st)
+function global_loss(p_net, settings::PINNSettings, coeff_net, st, use_gpu::Bool=false)
   total_loss = F(0.0)
   total_local_loss_bc = F(0.0)
   total_local_loss_pde = F(0.0)
@@ -207,7 +216,7 @@ function global_loss(p_net, settings::PINNSettings, coeff_net, st)
     # alpha_matrix = eval(Meta.parse(alpha_matrix_key)) # convert from string to matrix 
     matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
     boundary_condition = [series_coeffs[1], series_coeffs[2]]  # copy this
-    local_loss, local_loss_bc, local_loss_pde, local_loss_supervised = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings) # calculate the local loss
+    local_loss, local_loss_bc, local_loss_pde, local_loss_supervised = loss_fn(p_net, series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings, use_gpu) # calculate the local loss
     # println(local_loss)
     total_loss += local_loss # add up the local loss to find the global loss
     total_local_loss_bc += local_loss_bc
@@ -246,28 +255,31 @@ end
 We train the PINN on the training dataset and return the network
 =#
 
-function train_pinn(settings::PINNSettings, csv_file::Any)
-  # Initialize network
-  coeff_net, p_init_ca, st = initialize_network(settings)
+function train_pinn(settings::PINNSettings, output_dir; milestone_interval::Int=0, on_milestone::Union{Function,Nothing}=nothing)
+  run_id = generate_run_id(settings.optimizer)
+  csv_file = joinpath(output_dir, "loss.csv")
+
+  use_gpu = GPUUtils.is_gpu_available()
+
+  if use_gpu
+    @info "Training on GPU: $(GPUUtils.get_device())"
+  else
+    @info "Training on CPU"
+  end
+
+  coeff_net, p_init_ca, st = initialize_network(settings; use_gpu=use_gpu)
 
   history = []
   latest_metrics = Ref((0.0f0, 0.0f0, 0.0f0))
-  initialize_loss_buffer()
-  # global_loss_tuple = Tuple{Int64, Float64, Float64, Float64, Float64}[] # this will store the global loss per iteration milestone
-  # Create wrapper function for optimization
 
+  # Create wrapper function for optimization
   function loss_wrapper(p_net, _)
-    loss, losses = global_loss(p_net, settings, coeff_net, st)
+    loss, losses = global_loss(p_net, settings, coeff_net, st, use_gpu)
     latest_metrics[] = (losses.bc, losses.pde, losses.sup)
-    # return global_loss(p_net, settings, coeff_net, st, csv_file)
     return loss
   end
 
   function custom_callback(state, l; progress_bar)
-    # Update the progress bar (maintaining your existing UI)
-    # ProgressBar.update!(progress_bar) 
-    progress_bar(state, l)
-    # Record the data ONLY once per iteration
     bc, pde, sup = latest_metrics[]
     push!(history, (
         total = l,
@@ -275,65 +287,63 @@ function train_pinn(settings::PINNSettings, csv_file::Any)
         pde = pde,
         supervised = sup
     ))
+    progress_bar(state, l)
 
-    return false # Return true if you want to trigger early stopping
+    # Check if we've hit a milestone
+    iteration = length(history)
+    if on_milestone !== nothing && milestone_interval > 0 && iteration % milestone_interval == 0
+      p_current = use_gpu ? ComponentArray(Array(getdata(state.u)), getaxes(state.u)) : state.u
+      on_milestone(p_current, iteration, coeff_net, st, run_id)
+    end
+
+    return false
   end
-
 
   adtype = Optimization.AutoZygote()
   optfun = OptimizationFunction(loss_wrapper, adtype)
-
-
-  # ---------------- Stage 1: ADAM ----------------
-  
-  #=
-  println("Starting Adam training...")
-  p_one = ProgressBar.ProgressBarSettings(settings.maxiters_adam, "Adam Training...") # the progress bar has not been called...
-  callback_one = ProgressBar.Bar(p_one)
-=#
-  # Define the optimization problem
-
   prob = OptimizationProblem(optfun, p_init_ca)
-  #=
-  res = solve(prob,
-    OptimizationOptimisers.Adam(F(1e-3));
-    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_one),
-    # callback=callback_one, # this is for the progress bar 
-    maxiters=settings.maxiters_adam)
 
-  =#
+  # ---------------- Adam ----------------
+  @info "Starting Adam optimization..."
+  p_bar = ProgressBar.ProgressBarSettings(settings.maxiters_lbfgs, "Adam...")
+  callback_bar = ProgressBar.Bar(p_bar)
 
-  # ---------------- Stage 2: LBFGS ----------------
-
-  println("Starting LBFGS fine-tuning...")
-  p_two = ProgressBar.ProgressBarSettings(settings.maxiters_lbfgs, "LBFGS fine-tune...")
-  callback_two = ProgressBar.Bar(p_two)
-
-  # prob2 = remake(prob; u0=res.u) # prob hm.....
+  adam_opt = OptimizationOptimisers.Adam(0.001f0)
 
   res = solve(prob,
-    OptimizationOptimJL.LBFGS();
-    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_two),
-    # callback=callback_two,
+    adam_opt;
+    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_bar),
     maxiters=settings.maxiters_lbfgs)
 
-  # Extract final trained parameters
-  p_trained = res.u
+  #=
+  # ---------------- LBFGS (disabled) ----------------
+  @info "Starting LBFGS fine-tuning..."
+  p_bar = ProgressBar.ProgressBarSettings(settings.maxiters_lbfgs, "LBFGS fine-tune...")
+  callback_bar = ProgressBar.Bar(p_bar)
 
-  println("\nTraining complete.")
+  lbfgs_opt = OptimizationOptimJL.LBFGS()
 
-  for entry in history
-    buffer_loss_values(
-        total_loss = entry.total,
-        total_loss_bc = entry.bc,
-        total_loss_pde = entry.pde,
-        total_loss_supervised = entry.supervised
-    )
-  end
-  write_buffer_to_csv(csv_file)
-  # write_buffer_to_csv(csv_file) # write from buffer to csv
+  res = solve(prob,
+    lbfgs_opt;
+    callback = (state, l) -> custom_callback(state, l; progress_bar=callback_bar),
+    maxiters=settings.maxiters_lbfgs)
+  =#
 
-  return p_trained, coeff_net, st
+  # Extract final trained parameters — transfer back to CPU for evaluation/plotting
+  p_trained = use_gpu ? ComponentArray(Array(getdata(res.u)), getaxes(res.u)) : res.u
+
+  @info "Training complete."
+
+  df = DataFrame(
+    iteration = 1:length(history),
+    total = [e.total for e in history],
+    bc = [e.bc for e in history],
+    pde = [e.pde for e in history],
+    supervised = [e.supervised for e in history]
+  )
+  CSV.write(csv_file, df)
+
+  return p_trained, coeff_net, st, run_id
 end
 
 # ---------------------------------------------------------------------------
@@ -344,129 +354,101 @@ end
 # analytic_sol_func(x) = (pi * x * (-x + (pi^2) * (2x - 3) + 1) - sin(pi * x)) / (pi^3) # We replace with our training examples
 # This is then represented as a TaylorSeries 
 
-function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, benchmark_dataset, data_directories)
-  # println(benchmark_dataset)
+function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, benchmark_dataset, output_dir, run_id; iteration::Int=0)
   converted_benchmark_dataset = convert_plugboard_keys(benchmark_dataset)
-  fact = factorial.(big.(0:settings.n_terms_for_power_series)) # I am not considering this in the series. The PINN will guess the coefficients
+  fact = factorial.(big.(0:settings.n_terms_for_power_series))
 
   # We will update the error. For now we are only going to do ONE test set.
   loss = F(0.0)
 
   for (alpha_matrix_key, benchmark_series_coeffs) in converted_benchmark_dataset
-    # we need to compute the loss from the PINNs guess and the real function
-    # We will then use this for our contour maps
-    matrix_flat = vec(alpha_matrix_key)  # Flatten to a column vector
-    boundary_condition = [benchmark_series_coeffs[1], benchmark_series_coeffs[2]]  # copy this
-    # boundary_condition = benchmark_series_coeffs[1]
-    # benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings, data_directories[5])
-    benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings) #evluate at that spot
+    matrix_flat = Float32.(vec(alpha_matrix_key))  # Flatten to Float32 column vector
+    boundary_condition = [benchmark_series_coeffs[1], benchmark_series_coeffs[2]]
+
+    benchmark_loss, _, _, _ = loss_fn(p_trained, benchmark_series_coeffs, coeff_net, st, matrix_flat, boundary_condition, settings::PINNSettings)
     loss += benchmark_loss
 
     a_learned = first(coeff_net(matrix_flat, p_trained, st))[:, 1] # extract learned coefficients
 
-    """
-    This was originally here for getting the power series representation of the solution.
-    Instead for evaluation the function we will use the analytic solution for the ODE
-    """
-    # NOTE: THIS WILL STILL BE USED, I JUST HAVE TO FIGUERE OUT WHERE 
-    # u_real_func(x) = sum(benchmark_series_coeffs[i] * x^(i - 1) / fact[i] for i in 1:settings.n_terms_for_power_series) # very badd
+    # Write results.json — self-contained output for nn-viewer
+    results = Dict(
+      "alpha_matrix" => vec(alpha_matrix_key),
+      "benchmark_coefficients" => benchmark_series_coeffs,
+      "pinn_coefficients" => Float64.(a_learned),
+      "function_error" => Float64(loss),
+      "iteration" => iteration
+    )
+
+    results_file = joinpath(output_dir, "results.json")
+    entry_id = generate_run_id(settings.optimizer)
+    append_to_results_json(results_file, entry_id, results)
+
+    @info "Results written to $results_file (run: $run_id)"
+    @info "PINN's guess for coefficients: $a_learned"
+    @info "The REAL coefficients: $benchmark_series_coeffs"
+  end
+
+  ### ========================================================================
+  ### IMPLEMENTATION BEFORE NN-VIEWER
+  ### https://github.com/jonxlegasa/nn-viewer
+  ### All graph generation below is disabled — visualization is now handled
+  ### by the nn-viewer UI library which reads results.json
+  ### ========================================================================
+  #=
+  for (alpha_matrix_key, benchmark_series_coeffs) in converted_benchmark_dataset
+    matrix_flat = Float32.(vec(alpha_matrix_key))
+    a_learned = first(coeff_net(matrix_flat, p_trained, st))[:, 1]
+
+    # NOTE: THIS WILL STILL BE USED, I JUST HAVE TO FIGUERE OUT WHERE
+    # u_real_func(x) = sum(benchmark_series_coeffs[i] * x^(i - 1) / fact[i] for i in 1:settings.n_terms_for_power_series)
 
     # ODE Matrix [1; 6; 2;;]
-    roots = quadratic_formula(1, 6, 2) # this gets us the roots of the analytic solution to y'' + 6y' + 2y = 0
+    roots = quadratic_formula(1, 6, 2)
     c1 = (3 * roots[2] - 5) * (1/(roots[2] - roots[1]))
-    c2 = (-3 * roots[1] + 5) * (1/(roots[2] - roots[1])) # solve the boundary condition
+    c2 = (-3 * roots[1] + 5) * (1/(roots[2] - roots[1]))
 
-    println("c1: $c1")
-    println("c2: $c2")
-    println(roots)
+    u_real_func(x) = c1 * exp(roots[1] * x) + c2 * exp(roots[2] * x)
+    u_predict_func(x) = sum(a_learned[i] * x^(i - 1) / fact[i] for i in 1:settings.n_terms_for_power_series)
 
-    u_real_func(x) = c1 * exp(roots[1] * x) + c2 * exp(roots[2] * x) # a solution for D<0.
-    # u_real_func(x) = exp(roots[1] * x) * ((c1 * cos(roots[2] * x)) + (c1 * sin(roots[2] * x))) # a solution for D<0.
-
-    u_predict_func(x) = sum(a_learned[i] * x^(i - 1) / fact[i] for i in 1:settings.n_terms_for_power_series) # This will stay the same
-
-    # Generate plotting points
     x_plot = settings.x_left:F(0.01):settings.x_right
-    # It makes sense that this has to be replaced because this is used for plotting the error as well
     u_real = u_real_func.(x_plot)
     u_predict = u_predict_func.(x_plot)
-    # ============================================================================
+
     # FIGURE 1: Function Analysis (u(x) comparison and error)
-    # ============================================================================
-
-    # Plot 1a: Compare analytic solution vs PINN prediction
     function_comparison = plot(x_plot, u_real,
-      label="Analytic Solution",
-      linestyle=:dash,
-      linewidth=3,
-      title="ODE Solution Comparison",
-      xlabel="x",
-      ylabel="u(x)",
-      yscale=:log10,
-      legend=:best)
+      label="Analytic Solution", linestyle=:dash, linewidth=3,
+      title="ODE Solution Comparison", xlabel="x", ylabel="u(x)",
+      yscale=:log10, legend=:best)
+    plot!(function_comparison, x_plot, u_predict, label="PINN Power Series", linewidth=2)
 
-    plot!(function_comparison, x_plot, u_predict,
-      label="PINN Power Series",
-      linewidth=2)
-
-    # Plot 1b: Function error
     function_error_data = max.(abs.(u_real .- u_predict), F(1e-20))
     function_error_plot = plot(x_plot, function_error_data,
-      title="Absolute Error of Solution",
-      label="|Analytic - Predicted|",
-      yscale=:log10,
-      xlabel="x",
-      ylabel="Error",
-      linewidth=2)
+      title="Absolute Error of Solution", label="|Analytic - Predicted|",
+      yscale=:log10, xlabel="x", ylabel="Error", linewidth=2)
 
-    # Combine into Figure 1
-    figure_one = plot(function_comparison, function_error_plot,
-      layout=(2, 1),
-      size=(800, 800))
-
+    figure_one = plot(function_comparison, function_error_plot, layout=(2, 1), size=(800, 800))
     savefig(figure_one, data_directories[1])
 
-    # ============================================================================
     # FIGURE 2: Coefficient Analysis (comparison and error)
-    # ============================================================================
-
-    # Prepare data
     n_length_benchmark = length(benchmark_series_coeffs)
     indices = 1:n_length_benchmark
 
-    # plotlyjs()
-    # Plot 2a: Compare benchmark coefficients vs learned coefficients
     coefficient_comparison = plot(indices, benchmark_series_coeffs,
-      title="Coefficient Comparison",
-      label="Benchmark",
-      xlabel="Coefficient Index",
-      ylabel="Coefficient Value",
-      legend=:best)
+      title="Coefficient Comparison", label="Benchmark",
+      xlabel="Coefficient Index", ylabel="Coefficient Value", legend=:best)
+    plot!(coefficient_comparison, indices, a_learned[1:n_length_benchmark], label="PINN")
 
-    plot!(coefficient_comparison, indices, a_learned[1:n_length_benchmark],
-      label="PINN")
-
-    # Plot 2b: Coefficient error
     coefficient_error_data = max.(abs.(benchmark_series_coeffs .- a_learned[1:n_length_benchmark]), 1e-20)
     coefficient_error_plot = plot(indices, coefficient_error_data,
-      title="Absolute Error of Coefficients",
-      label="|Benchmark - PINN|",
-      yscale=:log10,
-      xlabel="Coefficient Index",
-      ylabel="Absolute Error",
-      linewidth=2)
+      title="Absolute Error of Coefficients", label="|Benchmark - PINN|",
+      yscale=:log10, xlabel="Coefficient Index", ylabel="Absolute Error", linewidth=2)
 
-    # Combine into Figure 2
-    figure_two = plot(coefficient_comparison, coefficient_error_plot,
-      layout=(2, 1),
-      size=(800, 800))
+    figure_two = plot(coefficient_comparison, coefficient_error_plot, layout=(2, 1), size=(800, 800))
     savefig(figure_two, data_directories[2])
 
-
-    # Read the CSV file
+    # FIGURE 3: Loss iteration plots
     df = CSV.read(data_directories[6], DataFrame)
 
-    # Helper function to extract values for a specific loss type
     function get_loss_values(df, loss_type_name)
       row = df[df.loss_type.==loss_type_name, :]
       if nrow(row) == 0
@@ -475,80 +457,26 @@ function evaluate_solution(settings::PINNSettings, p_trained, coeff_net, st, ben
       return Vector{Float32}(collect(skipmissing(row[1, 2:end])))
     end
 
-    # Extract all loss values
     total_loss = get_loss_values(df, "total_loss")
     total_loss_bc = get_loss_values(df, "total_loss_bc")
     total_loss_pde = get_loss_values(df, "total_loss_pde")
     total_loss_supervised = get_loss_values(df, "total_loss_supervised")
 
-    #= THIS CODE IS COMMENTED OUT BECAUSE THE WAY WE HAVE IT IS THE CSV FILE IS UPDATED AT EACH CALL OF THE GLOBAL LOSS FUNCTION
-    # Split into Adam and LBFGS phases
-    split_point = min(settings.maxiters_adam, length(total_loss))
+    total_loss_plot = plot(1:length(total_loss), total_loss,
+      title="Global Loss per Global Loss Call", xlabel="Loss Call", ylabel="Global Loss", yscale=:log10)
+    total_bc_loss_plot = plot(1:length(total_loss_bc), total_loss_bc,
+      title="Global BC Loss per Global Loss Call", xlabel="Loss Call", ylabel="BC Loss", yscale=:log10)
+    total_pde_loss_plot = plot(1:length(total_loss_pde), total_loss_pde,
+      title="Global PDE Loss per Global Loss Call", xlabel="Loss Call", ylabel="PDE Loss", yscale=:log10)
+    total_supervised_loss_plot = plot(1:length(total_loss_supervised), total_loss_supervised,
+      title="Global Supervised Loss per Global Loss Call", xlabel="Loss Call", ylabel="Supervised Loss", yscale=:log10)
 
-    total_loss_adam = total_loss[1:split_point]
-    total_loss_lbfgs = total_loss[(split_point + 1):end]
-
-    total_loss_bc_adam = total_loss_bc[1:split_point]
-    total_loss_bc_lbfgs = total_loss_bc[(split_point + 1):end]
-
-    total_loss_pde_adam = total_loss_pde[1:split_point]
-    total_loss_pde_lbfgs = total_loss_pde[(split_point + 1):end]
-
-    total_loss_supervised_adam = total_loss_supervised[1:split_point]
-    total_loss_supervised_lbfgs = total_loss_supervised[(split_point + 1):end]
-    =#
-
-    # Adam plots (using row indices 1:1000)
-    total_loss_plot = plot(
-      1:length(total_loss),
-      total_loss,
-      title="Global Loss per Global Loss Call",
-      xlabel="Loss Call",
-      ylabel="Global Loss",
-      yscale=:log10
-    )
-
-    total_bc_loss_plot = plot(
-      1:length(total_loss_bc),
-      total_loss_bc,
-      title="Global Boundary Condition Loss per Global Loss Call",
-      xlabel="Loss Call",
-      ylabel="BC Loss", yscale=:log10)
-
-    total_pde_loss_plot = plot(
-      1:length(total_loss_pde),
-      total_loss_pde,
-      title="Global PDE Loss per Global Loss Call",
-      xlabel="Loss Call",
-      ylabel="PDE Loss",
-      yscale=:log10
-    )
-
-    total_supervised_loss_plot = plot(
-      1:length(total_loss_supervised),
-      total_loss_supervised,
-      title="Global Supervised Loss per Global Loss Call",
-      xlabel="Loss Call",
-      ylabel="Supervised Loss", yscale=:log10
-    )
-
-    iteration_plot = plot(
-      total_loss_plot,
-      total_bc_loss_plot,
-      total_pde_loss_plot,
-      total_supervised_loss_plot,
-      layout=(4, 1),
-      size=(1000, 1000),
-    )
-
-    # Save plots
+    iteration_plot = plot(total_loss_plot, total_bc_loss_plot, total_pde_loss_plot, total_supervised_loss_plot,
+      layout=(4, 1), size=(1000, 1000))
     savefig(iteration_plot, data_directories[5])
-
-    println("\nPlots saved to 'data' directory.")
-
-    println("PINN's guess for coefficients: ", a_learned)
-    println("The REAL coefficients: ", benchmark_series_coeffs)
   end
+  =#
+
   return loss
 end
 

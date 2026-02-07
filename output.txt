@@ -1,0 +1,16 @@
+
+==================================================
+Generating datasets for training and benchmarks 01
+==================================================
+Number of examples: 10
+Loss buffer initialized
+0
+Wrote 1001 evaluations to data/test/iteration_output.csv
+c1: 4.145751311064591
+c2: -1.1457513110645905
+[-0.3542486889354093, -5.645751311064591]
+
+Plots saved to 'data' directory.
+PINN's guess for coefficients: Float32[0.9966499, 0.12138818, -0.17243442, 1.0409869, -8.849817, 28.959156, -28.824461, 28.720694, -28.642687, 32.039402, -22.762827]
+The REAL coefficients: Any[1.0, 2.0, -6.5, 38.0, -338.75, 4046.0, -60520.625, 1.08734825e6, -2.28040529375e7, 5.46753596375e8]
+2.9946062e16

@@ -29,30 +29,21 @@ end
 # This will traing each NN on different neuron counts
 function scaling_neurons(settings::TrainingSchemesSettings, neurons_counts::Dict{String,Int})
   for (filename, neuron_count) in neurons_counts
-    println("Starting training for $filename for $neuron_count neurons")
+    @info "Starting training for $filename for $neuron_count neurons"
     for (run_idx, inner_dict) in settings.training_dataset
       converted_dict = convert_plugboard_keys(inner_dict)
 
-      pinn_settings = PINNSettings(neuron_count, 1234, converted_dict, 500, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs)
-      # Convert the alpha matrix keys from strings to matrices
-      # Because zygote is being mean
-      base_data_dir = "data"
-      iteration_dir = joinpath(base_data_dir, filename)
-      mkpath(iteration_dir)
-      data_directories = [
-        joinpath(iteration_dir, "function_comparison.png"),
-        joinpath(iteration_dir, "coefficient_comparison.png"),
-        joinpath(iteration_dir, "adam_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "lbfgs_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "iteration_plot.png"),
-        joinpath(iteration_dir, "iteration_output.csv"),
-      ]
+      pinn_settings = PINNSettings(neuron_count, 1234, converted_dict, 500, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs, "adam")
+
+      output_dir = joinpath("results", filename)
+      mkpath(output_dir)
+
       converted_dict = convert_plugboard_keys(inner_dict)
 
       # Train the network
-      p_trained, coeff_net, st = train_pinn(pinn_settings, data_directories[6]) # this is where we call the training process
-      function_error = evaluate_solution(pinn_settings, p_trained, coeff_net, st, settings.benchmark_dataset["01"], data_directories)
-      println(function_error)
+      p_trained, coeff_net, st, run_id = train_pinn(pinn_settings, output_dir)
+      function_error = evaluate_solution(pinn_settings, p_trained, coeff_net, st, settings.benchmark_dataset["01"], output_dir, run_id)
+      @info "Function error: $function_error"
     end
   end
 end
@@ -83,66 +74,26 @@ function grid_search_at_scale(settings::TrainingSchemesSettings, neurons_counts:
 end
 
 
-## Enough neurons, lets do iterations.
-function scaling_adam(settings::TrainingSchemesSettings, iteration_counts::Dict{String,Int})
-  array_of_benchmark_loss = Float64[]
-  for (filename, iteration_count) in iteration_counts
-    println("Starting training for $filename for $iteration_count")
-    for (run_idx, inner_dict) in settings.training_dataset
-      converted_dict = convert_plugboard_keys(inner_dict)
+## Enough neurons, lets do iterations — train once, evaluate at milestones.
+function scaling_adam(settings::TrainingSchemesSettings, maxiters::Int, milestone_interval::Int)
+  output_dir = "results"
+  mkpath(output_dir)
 
-      pinn_settings = PINNSettings(100, 1234, converted_dict, iteration_count, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs)
-      # Convert the alpha matrix keys from strings to matrices
-      # Because zygote is being mean
-      base_data_dir = "data"
-      iteration_dir = joinpath(base_data_dir, filename)
-      mkpath(iteration_dir)
-      data_directories = [
-        joinpath(iteration_dir, "function_comparison.png"),
-        joinpath(iteration_dir, "coefficient_comparison.png"),
-        joinpath(iteration_dir, "adam_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "lbfgs_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "iteration_plot.png"),
-        joinpath(iteration_dir, "iteration_output.csv"),
-      ]
-      converted_dict = convert_plugboard_keys(inner_dict)
+  for (run_idx, inner_dict) in settings.training_dataset
+    converted_dict = convert_plugboard_keys(inner_dict)
 
-      # summary_file = joinpath("base_data_dir", filename, "benchmark_loss.txt")
-      # mkpath(dirname(summary_file))
+    pinn_settings = PINNSettings(100, 1234, converted_dict, maxiters, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs, "adam")
 
-      # Train the network
-      p_trained, coeff_net, st = train_pinn(pinn_settings, data_directories[6]) # this is where we call the training process
-      function_error = evaluate_solution(pinn_settings, p_trained, coeff_net, st, settings.benchmark_dataset["01"], data_directories)
-
-      push!(array_of_benchmark_loss, function_error)
-      println("Add to csv file")
-      println(function_error)
+    # Milestone callback — called mid-training every milestone_interval iterations
+    function on_milestone(p_current, iteration, coeff_net, st, run_id)
+      error = evaluate_solution(pinn_settings, p_current, coeff_net, st, settings.benchmark_dataset["01"], output_dir, run_id; iteration=iteration)
+      @info "Milestone $iteration — error: $error"
     end
+
+    # Train once, evaluating at each milestone interval
+    p_trained, coeff_net, st, run_id = train_pinn(pinn_settings, output_dir; milestone_interval=milestone_interval, on_milestone=on_milestone)
+    @info "Training complete for example $run_idx"
   end
-  # Save to CSV file
-  df = DataFrame(
-    index = 1:length(array_of_benchmark_loss),
-    function_error = array_of_benchmark_loss
-  )
-  CSV.write("./data/benchmark_losses.csv", df)
-  # CSV.write("./data/benchmark_losses.csv", df, writeheader = true, transform = (col, val) -> val)
-
-  # Create discrete plot
-  plot(
-    1:length(array_of_benchmark_loss),
-    array_of_benchmark_loss,
-    seriestype = :scatter,
-    marker = :circle,
-    markersize = 5,
-    xlabel = "Training Run",
-    ylabel = "Function Error",
-    title = "Benchmark Loss vs Training Run",
-    legend = false,
-    grid = true
-  )
-
-  # Optional: Save the plot
-  savefig("./data/benchmark_loss_plot.png")
 end
 
 
@@ -151,62 +102,31 @@ end
 function scaling_lbfgs(settings::TrainingSchemesSettings, iteration_counts::Dict{String,Int})
   array_of_benchmark_loss = Float64[]
   for (filename, iteration_count) in iteration_counts
-    println("Starting training for $filename for $iteration_count")
+    @info "Starting training for $filename for $iteration_count"
     for (run_idx, inner_dict) in settings.training_dataset
       converted_dict = convert_plugboard_keys(inner_dict)
 
-      pinn_settings = PINNSettings(100, 1234, converted_dict, iteration_count, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs)
-      # Convert the alpha matrix keys from strings to matrices
-      # Because zygote is being mean
-      base_data_dir = "data"
-      iteration_dir = joinpath(base_data_dir, filename)
-      mkpath(iteration_dir)
-      data_directories = [
-        joinpath(iteration_dir, "function_comparison.png"),
-        joinpath(iteration_dir, "coefficient_comparison.png"),
-        joinpath(iteration_dir, "adam_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "lbfgs_iteration_and_loss_comparison.png"),
-        joinpath(iteration_dir, "iteration_plot.png"),
-        joinpath(iteration_dir, "iteration_output.csv"),
-      ]
+      pinn_settings = PINNSettings(100, 1234, converted_dict, iteration_count, settings.num_supervised, settings.N, settings.num_points, settings.x_left, settings.x_right, settings.supervised_weight, settings.bc_weight, settings.pde_weight, settings.xs, "lbfgs")
+
+      output_dir = joinpath("results", filename)
+      mkpath(output_dir)
+
       converted_dict = convert_plugboard_keys(inner_dict)
 
-      # summary_file = joinpath("base_data_dir", filename, "benchmark_loss.txt")
-      # mkpath(dirname(summary_file))
-
       # Train the network
-      p_trained, coeff_net, st = train_pinn(pinn_settings, data_directories[6]) # this is where we call the training process
-      function_error = evaluate_solution(pinn_settings, p_trained, coeff_net, st, settings.benchmark_dataset["01"], data_directories)
+      p_trained, coeff_net, st, run_id = train_pinn(pinn_settings, output_dir)
+      function_error = evaluate_solution(pinn_settings, p_trained, coeff_net, st, settings.benchmark_dataset["01"], output_dir, run_id)
 
       push!(array_of_benchmark_loss, function_error)
-      println("Add to csv file")
-      println(function_error)
+      @info "Function error: $function_error"
     end
   end
-  # Save to CSV file
+  # Save summary to CSV
   df = DataFrame(
     index = 1:length(array_of_benchmark_loss),
     function_error = array_of_benchmark_loss
   )
-  CSV.write("./data/benchmark_losses.csv", df)
-  # CSV.write("./data/benchmark_losses.csv", df, writeheader = true, transform = (col, val) -> val)
-
-  # Create discrete plot
-  plot(
-    1:length(array_of_benchmark_loss),
-    array_of_benchmark_loss,
-    seriestype = :scatter,
-    marker = :circle,
-    markersize = 5,
-    xlabel = "Training Run",
-    ylabel = "Function Error",
-    title = "Benchmark Loss vs Training Run",
-    legend = false,
-    grid = true
-  )
-
-  # Optional: Save the plot
-  savefig("./data/benchmark_loss_plot.png")
+  CSV.write("./results/benchmark_losses.csv", df)
 end
 
 

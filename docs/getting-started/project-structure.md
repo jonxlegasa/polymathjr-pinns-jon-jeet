@@ -14,6 +14,7 @@ polymathjr-pinns-jon-jeet/
 │   ├── plugboard.jl            # ODE dataset generation
 │   ├── helper_funcs.jl         # Utilities
 │   ├── loss_functions.jl       # Loss computation
+│   ├── gpu_utils.jl            # GPU detection and device transfers
 │   ├── training_schemes.jl     # Training strategies
 │   ├── ProgressBar.jl          # Progress tracking
 │   ├── binary_search_on_weights.jl
@@ -40,6 +41,7 @@ polymathjr-pinns-jon-jeet/
 | `modelcode/PINN.jl` | Core PINN with `PINNSettings`, `train_pinn()`, `global_loss()` |
 | `utils/plugboard.jl` | Generates ODEs and computes power series coefficients |
 | `utils/loss_functions.jl` | PDE, BC, supervised loss functions |
+| `utils/gpu_utils.jl` | GPU detection, device transfer utilities |
 | `scripts/visualizer.py` | `GeneralizedVisualizer`, `PowerSeriesVisualizer` classes |
 
 ---

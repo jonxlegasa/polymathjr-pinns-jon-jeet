@@ -13,17 +13,17 @@ Complete pipeline from ODE definition to trained model.
 2. Initialization
    └─→ Load datasets, create PINNSettings
 
-3. Network Setup
-   └─→ initialize_network() creates Lux model
+3. Device Detection
+   └─→ Auto-detect GPU (CUDA) or fall back to CPU
 
-4. Adam Training
-   └─→ 10,000 iterations, global exploration
+4. Network Setup
+   └─→ initialize_network() creates Lux model, transfers to GPU if available
 
-5. LBFGS Fine-tuning
-   └─→ 100 iterations, local optimization
+5. Adam Training (LBFGS under investigation)
+   └─→ Configurable iterations, optimization
 
 6. Evaluation
-   └─→ Benchmark testing, plot generation
+   └─→ Parameters transferred back to CPU, benchmark testing, plot generation
 
 7. Output
    └─→ CSV loss history, PNG plots
@@ -65,16 +65,20 @@ settings = PINNSettings(
 
 ---
 
-### Step 3: Initialize Network
+### Step 3: Device Detection & Network Setup
 
 ```julia
-coeff_net, p_net, st = initialize_network(settings)
+# Automatic GPU detection in train_pinn()
+use_gpu = GPUUtils.is_gpu_available()  # true if CUDA functional
+
+coeff_net, p_net, st = initialize_network(settings; use_gpu=use_gpu)
 ```
 
 **Architecture:**
 - Input: flattened ODE matrix + initial conditions
-- Hidden: 6 layers × `neuron_num` neurons (σ activation)
+- Hidden: 4 layers × `neuron_num` neurons (σ activation)
 - Output: N+1 coefficients
+- Parameters transferred to GPU via `CUDA.cu()` when available
 
 ---
 
@@ -84,21 +88,12 @@ coeff_net, p_net, st = initialize_network(settings)
 # In train_pinn()
 opt_func = OptimizationFunction(loss_wrapper, AutoZygote())
 prob = OptimizationProblem(opt_func, p_net)
-result = solve(prob, Adam(0.01), maxiters=10000)
+result = solve(prob, Adam(0.001f0), maxiters=settings.maxiters_lbfgs)
 ```
 
-**Purpose:** Global exploration of parameter space
+**Purpose:** Optimization with configurable iteration count. Loss functions use vectorized matrix operations for GPU compatibility (no scalar indexing).
 
----
-
-### Step 5: LBFGS Fine-tuning
-
-```julia
-prob2 = OptimizationProblem(opt_func, result.u)
-result2 = solve(prob2, LBFGS(), maxiters=100)
-```
-
-**Purpose:** Local refinement for precise convergence
+> **Note:** LBFGS code is present in `train_pinn` but currently commented out. Further work is needed to understand its convergence behavior before re-enabling.
 
 ---
 

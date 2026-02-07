@@ -4,6 +4,18 @@ using LinearAlgebra
 using TaylorSeries
 using Random
 using JSON
+using Logging
+using ProgressMeter
+
+DEBUG = true  # Toggle verbose debug output
+
+#= Enable @debug level logging when DEBUG is true
+function __init__()
+  if DEBUG
+    global_logger(ConsoleLogger(stderr, Logging.Debug))
+  end
+end
+=#
 
 struct Settings
   ode_order::Int
@@ -87,15 +99,15 @@ function solve_ode_series_closed_form(α_matrix, initial_conditions, num_terms)
   # Initialize series with initial conditions
   series_coeffs = Float64.(initial_conditions)
 
-  println("Starting with initial conditions: ", series_coeffs)
-  println("ODE order: ", m)
+  DEBUG && @info "DEBUG: Starting with initial conditions: $series_coeffs"
+  DEBUG && @info "DEBUG: ODE order: $m"
 
   # Compute coefficients using closed form
   for n in 0:(num_terms-length(initial_conditions)-1)
     # Check if c_{m,0} is zero (would make equation singular)
     c_m_0 = α_matrix[m+1, 1]  # c_{m,0} is at position [m+1, 1]
     if c_m_0 == 0
-      println("Error: c_{m,0} = 0, cannot solve")
+      DEBUG && @warn "DEBUG: c_{m,0} = 0, cannot solve for this ODE"
       break
     end
 
@@ -136,35 +148,31 @@ end
 function generate_random_ode_dataset(s::Settings, batch_index::Int)
   ode_order = s.ode_order
   poly_degree = s.poly_degree
-  println("\ngenerating random α matrices for:")
-  println("- ode order: $ode_order")
-  println("- polynomial degree: $poly_degree")
+
+  p_bar = Progress(s.dataset_size, desc="Generating ODEs...")
 
   # Generate dataset_size examples
   for example_k in 1:s.dataset_size
     # α_matrix = generate_random_alpha_matrix(s.ode_order, s.poly_degree) # generate ODE matrix
     α_matrix = generate_random_alpha_matrix_with_constraint(s.ode_order, s.poly_degree) # generate ODE matrix
-    println("\n--- Example #$example_k ---")
-    println("α matrix:")
-    display(α_matrix)
+
     # generate exactly ode_order initial conditions
     initial_conditions = Float64[]
     for i in 0:(ode_order-1)
       if i == 0
         push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
         # push!(initial_conditions, rand(1:5))  # y(0) = a_0
-        println("y(0) = ", initial_conditions[end])
       elseif i == 1
         push!(initial_conditions, 2.0)  # y'(0) = a_1, we will set thie init condition to be 1
         # push!(initial_conditions, rand(1:5))  # y'(0) = a_1
-        println("y'(0) = ", initial_conditions[end])
       end
     end
     try
       # output taylor series and its coefficients
       # this actually computes the taylor series
       series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, s.num_of_terms)
-      println("truncated series coefficients: ", series_coeffs)
+      DEBUG && @info "DEBUG: Truncated series coefficients: $series_coeffs"
+
       # read existing data
       existing_data = if isfile(s.data_dir)
         JSON.parsefile(s.data_dir)
@@ -181,15 +189,17 @@ function generate_random_ode_dataset(s::Settings, batch_index::Int)
       end
 
       # use alpha matrix as key, series coefficients as value within the dataset batch
-      existing_data[dataset_key][string(α_matrix)] = series_coeffs # this is the source of our problems 
+      existing_data[dataset_key][string(α_matrix)] = series_coeffs # this is the source of our problems
 
       isdir("data") || mkpath("data") # ensure a data folder exists
       json_string = JSON.json(existing_data)
       write(s.data_dir, json_string)
     catch e
-      println("failed to solve this ode: ", e)
+      @warn "Failed to solve this ODE" exception=e
       continue
     end
+
+    ProgressMeter.next!(p_bar; showvalues=[(:ode, "$(example_k)/$(s.dataset_size)"), (:matrix, string(α_matrix))])
   end
 end
 
@@ -197,26 +207,21 @@ end
 function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix::Matrix{Int64})
   ode_order = s.ode_order
   poly_degree = s.poly_degree
-  # α_matrix = generate_random_alpha_matrix(s.ode_order, s.poly_degree) # generate ODE matrix
-  println("α matrix:")
-  display(α_matrix)
+  DEBUG && @info "DEBUG: Generating specific ODE benchmark" α_matrix
   # generate exactly ode_order initial conditions
   initial_conditions = Float64[]
   for i in 0:(ode_order-1)
     if i == 0
       push!(initial_conditions, 1.0)  # y(0) = a_0, we will set thie init condition to be 1
       # push!(initial_conditions, rand(1:5))  # y(0) = a_0
-      println("y(0) = ", initial_conditions[end])
     elseif i == 1
       push!(initial_conditions, 2.0)  # y(0) = a_0, we will set thie init condition to be 1
       # push!(initial_conditions, rand(1:5))  # y'(0) = a_1
-      println("y'(0) = ", initial_conditions[end])
     end
   end
   try
     # output taylor series and its coefficients
-    series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
-    println("truncated series coefficients: ", series_coeffs)
+    series_coeffs = solve_ode_series_closed_form(α_matrix, initial_conditions, s.num_of_terms) # haha this was the issue
     # read existing data
     existing_data = if isfile(s.data_dir)
       JSON.parsefile(s.data_dir)
@@ -237,7 +242,7 @@ function generate_specific_ode_dataset(s::Settings, batch_index::Int, α_matrix:
     json_string = JSON.json(existing_data)
     write(s.data_dir, json_string)
   catch e
-    println("failed to solve this ode: ", e)
+    @warn "Failed to solve this ODE" exception=e
     return nothing
   end
 end
@@ -253,16 +258,16 @@ function generate_ode_dataset_from_array_of_alpha_matrices(s::Settings, batch_in
     if i == 0
       push!(initial_conditions, rand(1:10))  # y(0) = a_0
       # push!(initial_conditions, 1)  # y(0) = a_0
-      println("y(0) = ", initial_conditions[end])
+      DEBUG && @info "DEBUG: y(0) = $(initial_conditions[end])"
     elseif i == 1
       push!(initial_conditions, rand(1:11))  # y'(0) = a_1
-      println("y'(0) = ", initial_conditions[end])
+      DEBUG && @info "DEBUG: y'(0) = $(initial_conditions[end])"
     end
   end
   try
     for matrix in α_matrices
       series_coeffs = solve_ode_series_closed_form(matrix, initial_conditions, s.num_of_terms) # haha this was the issue 
-      println("truncated series coefficients: ", series_coeffs)
+      DEBUG && @info "DEBUG: Truncated series coefficients: $series_coeffs"
       # read existing data
       existing_data = if isfile(s.data_dir)
         JSON.parsefile(s.data_dir)
@@ -285,7 +290,7 @@ function generate_ode_dataset_from_array_of_alpha_matrices(s::Settings, batch_in
       write(s.data_dir, json_string)
     end
   catch e
-    println("failed to solve this ode: ", e)
+    @warn "Failed to solve this ODE" exception=e
     return nothing
   end
 end

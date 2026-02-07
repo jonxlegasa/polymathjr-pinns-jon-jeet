@@ -30,33 +30,35 @@ end
 
 ## Key Functions
 
-### `initialize_network(settings)`
+### `initialize_network(settings; use_gpu=false)`
 
-Creates neural network architecture.
+Creates neural network architecture and optionally transfers parameters to GPU.
 
 ```julia
-initialize_network(settings::PINNSettings) → (network, params, state)
+initialize_network(settings::PINNSettings; use_gpu::Bool=false) → (network, params, state)
 ```
 
 **Architecture:**
-- 6 hidden layers with configurable neuron count
+- 4 hidden layers with configurable neuron count
 - Sigmoid activation function
 - Output layer sized for power series coefficients
 
+When `use_gpu=true`, parameters are transferred to GPU via `CUDA.cu()`.
+
 ---
 
-### `loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings)`
+### `loss_fn(p_net, data, coeff_net, st, ode_matrix_flat, boundary_condition, settings, use_gpu=false)`
 
-Computes loss for a single ODE.
+Computes loss for a single ODE. Transfers all inputs to the correct device (GPU/CPU) before the forward pass.
 
 ```julia
-loss_fn(...) → (total_loss, state, component_losses)
+loss_fn(...) → (total_loss, loss_bc, loss_pde, loss_supervised)
 ```
 
 **Components:**
-- PDE residual loss
-- Boundary condition loss
-- Supervised coefficient loss
+- PDE residual loss (vectorized matrix multiply, GPU-compatible)
+- Boundary condition loss (dot products with precomputed power vectors)
+- Supervised coefficient loss (padded mask to avoid scalar indexing)
 
 ---
 
@@ -72,15 +74,18 @@ global_loss(...) → (mean_loss, state, aggregated_components)
 
 ### `train_pinn(settings, csv_file)`
 
-Two-stage training: Adam then LBFGS.
+Auto-detects GPU and trains with Adam. LBFGS is available but currently disabled pending convergence investigation. Returns CPU parameters regardless of training device.
 
 ```julia
 train_pinn(settings::PINNSettings, csv_file) → (trained_params, network, state)
 ```
 
-**Stages:**
-1. Adam: `maxiters_adam` iterations (global exploration)
-2. LBFGS: 100 iterations (fine-tuning)
+**Behavior:**
+- Checks `GPUUtils.is_gpu_available()` at start
+- Transfers network parameters to GPU if available
+- Runs Adam optimization for `maxiters_lbfgs` iterations
+- LBFGS code is present but commented out (needs further work on convergence)
+- Transfers trained parameters back to CPU before returning
 
 ---
 

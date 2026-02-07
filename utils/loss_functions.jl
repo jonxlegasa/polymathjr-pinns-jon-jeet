@@ -1,24 +1,138 @@
 module loss_functions
 using CSV
 using DataFrames
+using Zygote: Zygote
 
 include("./helper_funcs.jl")
 using .helper_funcs
 
-struct LossFunctionSettings
-  a_vec::Vector{Float32}
+# Parametric struct: V can be Vector{Float32} (CPU) or CuVector{Float32} (GPU)
+struct LossFunctionSettings{V<:AbstractVector{Float32}}
+  a_vec::V
   n_terms_for_power_series::Int
-  ode_matrix_flat::Vector{Float32}
+  ode_matrix_flat::V
   x_left::Float32
-  boundary_condition::Array{Float32}
-  xs::Vector{Float32}
+  boundary_condition::V
+  xs::V
   num_points::Int
   num_supervised::Int
-  data::Vector{Float32}
+  data::V
 end
 
-fact = factorial.(big.(0:21)) # I AM putting this term after the PINN guesses the coefficients without the factorial term
+# Pre-compute inverse factorials in Float32 for GPU-compatible loss computation
+# 21! fits in Float64; 1/21! ≈ 1.95e-20 is above Float32 minimum
+const INV_FACT = Float32.(1.0 ./ factorial.(big.(0:40)))
 
+# Keep BigFloat factorials for evaluation/plotting code (CPU only)
+fact = factorial.(big.(0:21))
+
+"""
+    generate_loss_pde_value(settings)
+
+GPU-compatible PDE loss using vectorized matrix operations.
+Precomputes composite operator W (constant w.r.t. a_vec) so that
+residual = W * a_vec is a single differentiable matrix-vector multiply.
+"""
+function generate_loss_pde_value(settings::LossFunctionSettings)
+  N1 = settings.n_terms_for_power_series + 1
+
+  # Build W matrix inside Zygote.ignore — it doesn't depend on a_vec
+  # so Zygote correctly treats it as a constant
+  W = Zygote.ignore() do
+    xs_cpu = Float32.(collect(settings.xs))
+    ode_cpu = Float32.(collect(settings.ode_matrix_flat))
+    P = length(xs_cpu)
+    M = length(ode_cpu)
+
+    # W[j, i] = Σ_{k=0}^{min(i-1, M-1)} ode[k+1] * xs[j]^(i-1-k) * INV_FACT[i-k]
+    W_cpu = zeros(Float32, P, N1)
+    for j in 1:P
+      for i in 1:N1
+        for k in 0:min(i - 1, M - 1)
+          W_cpu[j, i] += ode_cpu[k + 1] * xs_cpu[j]^(i - 1 - k) * INV_FACT[i-k]
+        end
+      end
+    end
+
+    # Transfer to same device as a_vec
+    W_dev = similar(settings.a_vec, P, N1)
+    copyto!(W_dev, W_cpu)
+    W_dev
+  end
+
+  # Single differentiable operation — Zygote handles this on both CPU and GPU
+  residual = W * settings.a_vec
+  return sum(abs2, residual) / settings.num_points
+end
+
+"""
+    generate_loss_bc_value(settings)
+
+GPU-compatible boundary condition loss.
+Uses full-length dot products with precomputed power vectors
+to avoid scalar indexing of a_vec.
+"""
+function generate_loss_bc_value(settings::LossFunctionSettings)
+  N1 = settings.n_terms_for_power_series + 1
+  x0 = settings.x_left
+
+  # Precompute power vectors (constants w.r.t. a_vec)
+  pow_u, pow_du_full, bc1, bc2 = Zygote.ignore() do
+    # u(x0) weights: x0^(i-1) * INV_FACT[i]
+    pow_u_cpu = Float32[x0^(i - 1) * INV_FACT[i] for i in 1:N1]
+
+    # Du(x0) weights, padded to full length (index 1 = 0) to avoid slicing a_vec
+    pow_du_cpu = Float32[i == 1 ? 0.0f0 : x0^(i - 2) * INV_FACT[i-1] for i in 1:N1]
+
+    # Transfer to same device as a_vec
+    pu = similar(settings.a_vec)
+    copyto!(pu, pow_u_cpu)
+    pdu = similar(settings.a_vec)
+    copyto!(pdu, pow_du_cpu)
+
+    # Extract boundary condition scalars to CPU
+    bc_cpu = Float32.(collect(settings.boundary_condition))
+    (pu, pdu, bc_cpu[1], bc_cpu[2])
+  end
+
+  a = settings.a_vec
+  u_val = sum(a .* pow_u)
+  du_val = sum(a .* pow_du_full)
+
+  loss_bc = abs(u_val - bc1) + abs(du_val - bc2)
+  return loss_bc
+end
+
+"""
+    generate_loss_supervised_value(settings)
+
+GPU-compatible supervised loss.
+Uses padded data + mask to avoid a_vec[1:K] slicing
+which triggers Zygote's broken ∇getindex! on GPU.
+"""
+function generate_loss_supervised_value(settings::LossFunctionSettings)
+  K = settings.num_supervised
+  N1 = length(settings.a_vec)
+
+  padded_data, mask = Zygote.ignore() do
+    d_cpu = Float32.(collect(settings.data))
+    pd_cpu = zeros(Float32, N1)
+    m_cpu = zeros(Float32, N1)
+    pd_cpu[1:min(K, length(d_cpu))] .= d_cpu[1:min(K, length(d_cpu))]
+    m_cpu[1:K] .= 1.0f0
+
+    pd = similar(settings.a_vec)
+    copyto!(pd, pd_cpu)
+    m = similar(settings.a_vec)
+    copyto!(m, m_cpu)
+    (pd, m)
+  end
+
+  diff = (settings.a_vec - padded_data) .* mask
+  return sum(abs2, diff) / K
+end
+
+# Keep scalar versions for evaluation/plotting (CPU only, not used in training gradient path)
 function ode_residual(settings::LossFunctionSettings, x)
   return sum(
     settings.ode_matrix_flat[order+1] * (
@@ -33,66 +147,9 @@ function ode_residual(settings::LossFunctionSettings, x)
   )
 end
 
-# Updated functions using the settings struct
 function generate_u_approx(settings::LossFunctionSettings)
   u_approx(x) = sum(settings.a_vec[i] * x^(i - 1) / fact[i] for i in 1:(settings.n_terms_for_power_series+1))
   return u_approx
-end
-
-function generate_loss_pde_value(settings::LossFunctionSettings)
-  loss_pde = sum(
-    abs2,
-    ode_residual(settings, xi)
-    for xi in settings.xs
-  ) / settings.num_points
-
-  return loss_pde
-end
-
-#=
-function generate_loss_bc_value(settings::LossFunctionSettings)
-  u_approx = generate_u_approx(settings)
-  loss_bc = abs2(u_approx(settings.x_left) - settings.boundary_condition[1])
-  return loss_bc
-end
-=#
-
-function generate_loss_bc_value(settings::LossFunctionSettings)
-  # Define the approximate solution and its derivatives using the coefficients from the network.
-  # This is the power series representation: u(x) = Σ aᵢ * x^(i-1) / (i-1)!
-  u_approx(x) = sum(settings.a_vec[i] * x^(i - 1) / fact[i] for i in 1:settings.n_terms_for_power_series+1)
-  Du_approx(x) = sum(settings.a_vec[i] * x^(i - 2) / fact[i-1] for i in 2:settings.n_terms_for_power_series+1) # First derivative
-  # D3u_approx(x) = sum(a_vec[i] * x^(i - 4) / fact[i-3] for i in 4:N+1) # Third derivative
-
-  # Boundary condition loss
-  loss_bc = abs(u_approx(settings.x_left) - settings.boundary_condition[1]) + abs(Du_approx(settings.x_left) - settings.boundary_condition[2])
-
-  # Boundary condition loss for first order
-  # loss_bc = abs(u_approx(settings.x_left) - settings.boundary_condition[1])
-
-  return loss_bc
-end
-
-#=
-function generate_loss_supervised_value(settings::LossFunctionSettings)
-  # Take absolute values first (since log requires positive numbers)
-  # Add small epsilon to avoid log(0)
-  log_predicted = log.(abs.(settings.a_vec[1:settings.num_supervised]) .+ 1e-10)
-  log_target = log.(abs.(settings.data) .+ 1e-10)
-
-  # Standard squared error in log-space
-  loss_supervised = sum(abs2, log_predicted - log_target) / settings.num_supervised
-  return loss_supervised
-end
-=#
-
-# first, we are going to try this approach for now.
-function generate_loss_supervised_value(settings::LossFunctionSettings)
-  # println("PINNs output: ", settings.a_vec)
-  # println("REAL coefficients: ", settings.data)
-  loss_supervised = sum(abs2, settings.a_vec[1:settings.num_supervised] - settings.data) / settings.num_supervised
-
-  return loss_supervised
 end
 
 export LossFunctionSettings, generate_loss_pde_value, generate_loss_bc_value, generate_loss_supervised_value, ode_residual, generate_u_approx

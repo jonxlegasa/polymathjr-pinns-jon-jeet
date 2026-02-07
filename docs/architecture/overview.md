@@ -40,10 +40,10 @@ Output: power series coefficients
 
 ## Training Pipeline
 
-1. **Initialize** network with random parameters
-2. **Adam** optimization (10,000 iterations)
-3. **LBFGS** fine-tuning (100 iterations)
-4. **Evaluate** on benchmark dataset
+1. **Detect device** — auto-selects GPU (CUDA) or CPU
+2. **Initialize** network with random parameters (transferred to GPU if available)
+3. **Adam** optimization (configurable iterations; LBFGS under investigation)
+4. **Evaluate** on benchmark dataset (always on CPU)
 5. **Save** plots and loss history
 
 ---

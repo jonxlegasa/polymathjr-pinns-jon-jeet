@@ -67,11 +67,11 @@ num_supervised, N, x_left, x_right, xs, base_data_dir)
       float_converted_dict[Float32.(mat)] = series
     end
 
-    settings = PINNSettings(neuron_count, 1234, float_converted_dict, 10000, 1, num_supervised, N, 1000, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs)
+    settings = PINNSettings(neuron_count, 1234, float_converted_dict, 10000, 1, num_supervised, N, 1000, x_left, x_right, supervised_weight, bc_weight, pde_weight, xs, "adam")
 
     # Train the network
-    p_trained, coeff_net, st = train_pinn(settings, data_directories[6]) # this is where we call the training process
-    function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], data_directories)
+    p_trained, coeff_net, st, run_id = train_pinn(settings, config_dir)
+    function_error = evaluate_solution(settings, p_trained, coeff_net, st, benchmark_dataset["01"], config_dir, run_id)
     println(function_error)
 
     total_error += function_error

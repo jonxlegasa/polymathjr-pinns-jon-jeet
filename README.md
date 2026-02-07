@@ -10,7 +10,8 @@ Instead of learning the solution function directly, this PINN outputs the coeffi
 
 - **Power Series Learning**: Neural network outputs power series coefficients
 - **Multi-Loss Training**: Combines PDE residual, boundary conditions, and supervised losses
-- **Two-Stage Optimization**: Adam for global exploration, LBFGS for fine-tuning
+- **GPU Acceleration**: Auto-detects CUDA GPUs, falls back to CPU transparently
+- **Adam + LBFGS Optimization**: Adam active; LBFGS under investigation for convergence tuning
 - **Interactive Visualization**: Python dashboard for analyzing results (oooooo....)
 
 ## Project Structure
@@ -24,6 +25,7 @@ Instead of learning the solution function directly, this PINN outputs the coeffi
 ├── utils/
 │   ├── plugboard.jl         # ODE dataset generation
 │   ├── loss_functions.jl    # Loss computation
+│   ├── gpu_utils.jl         # GPU detection and device transfers
 │   └── ...                  # Other utilities
 ├── scripts/
 │   ├── visualizer.py        # Interactive visualization
@@ -79,8 +81,9 @@ python main.py
 |-----------|------------|
 | Backend | Julia 1.9+ |
 | Neural Networks | Lux.jl |
-| Optimization | Optimization.jl (Adam, LBFGS) |
+| Optimization | Optimization.jl (Adam active, LBFGS planned) |
 | Autodiff | Zygote.jl |
+| GPU | CUDA.jl (auto-detected) |
 | Visualization | Python / Matplotlib |
 
 ## License
